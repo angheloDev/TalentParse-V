@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "TalentParse",
+    "slug": "talentparse",
+    "version": "1.0.0",
+    "scheme": "talentparse",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#101a22"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.talentparse.app"
+    },
+    "android": {
+      "package": "com.talentparse.app",
+      "softwareKeyboardLayoutMode": "resize"
+    },
+    "plugins": ["expo-router", "expo-secure-store"]
+  }
+}

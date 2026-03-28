@@ -1,0 +1,5 @@
+import { JobsScreen } from '@/screens/JobsScreen';
+
+export default function JobsRoute() {
+  return <JobsScreen />;
+}
