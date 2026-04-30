@@ -1,10 +1,8 @@
-import { useUser } from '@clerk/clerk-expo';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
-  Image,
   KeyboardAvoidingView,
   Pressable,
   ScrollView,
@@ -16,22 +14,25 @@ import {
 import { AppHeader } from '@/components/AppHeader';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { useAppAuth } from '@/providers/AuthProvider';
 import { useToastStore } from '@/store/useToastStore';
 import { getAuthErrorMessage } from '@/utils/authError';
 import { keyboardAvoidingBehavior } from '@/utils/keyboardAvoiding';
 
 export function ProfileScreen() {
   const router = useRouter();
-  const { user, isLoaded } = useUser();
+  const { user, isLoaded, updateProfile } = useAppAuth();
   const [editing, setEditing] = useState(false);
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
+  const [email, setEmail] = useState('');
   const [saving, setSaving] = useState(false);
 
   const startEdit = useCallback(() => {
     if (!user) return;
-    setFirstName(user.firstName ?? '');
-    setLastName(user.lastName ?? '');
+    setFirstName(user.firstName);
+    setLastName(user.lastName);
+    setEmail(user.email);
     setEditing(true);
   }, [user]);
 
@@ -43,8 +44,11 @@ export function ProfileScreen() {
     if (!user) return;
     setSaving(true);
     try {
-      await user.update({ firstName: firstName.trim() || undefined, lastName: lastName.trim() || undefined });
-      await user.reload();
+      await updateProfile({
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        email: email.trim(),
+      });
       setEditing(false);
       useToastStore.getState().show({ title: 'Profile updated', type: 'success' });
     } catch (e) {
@@ -56,7 +60,7 @@ export function ProfileScreen() {
     } finally {
       setSaving(false);
     }
-  }, [user, firstName, lastName]);
+  }, [user, firstName, lastName, email, updateProfile]);
 
   if (!isLoaded) {
     return (
@@ -74,7 +78,7 @@ export function ProfileScreen() {
     );
   }
 
-  const primaryEmail = user.primaryEmailAddress?.emailAddress ?? user.emailAddresses[0]?.emailAddress ?? '';
+  const initials = `${user.firstName?.[0] ?? '?'}${user.lastName?.[0] ?? ''}`.toUpperCase();
 
   return (
     <View className="flex-1 bg-background-light dark:bg-background-dark">
@@ -87,26 +91,20 @@ export function ProfileScreen() {
           contentContainerStyle={{ paddingBottom: 120 }}
         >
         <View className="mb-6 items-center">
-          {user.imageUrl ? (
-            <Image source={{ uri: user.imageUrl }} className="size-28 rounded-full" />
-          ) : (
-            <View className="size-28 items-center justify-center rounded-full bg-primary/15 dark:bg-primary-dark/20">
-              <Text className="text-3xl font-bold text-primary dark:text-primary-dark">
-                {(user.firstName?.[0] ?? '?').toUpperCase()}
-                {(user.lastName?.[0] ?? '').toUpperCase()}
-              </Text>
-            </View>
-          )}
+          <View className="size-28 items-center justify-center rounded-full bg-primary/15 dark:bg-primary-dark/20">
+            <Text className="text-3xl font-bold text-primary dark:text-primary-dark">{initials}</Text>
+          </View>
           <Text className="mt-3 text-xl font-bold text-slate-900 dark:text-slate-100">
-            {user.fullName || 'Your account'}
+            {`${user.firstName} ${user.lastName}`.trim() || 'Your account'}
           </Text>
-          <Text className="mt-1 text-sm text-slate-500 dark:text-slate-400">{primaryEmail}</Text>
+          <Text className="mt-1 text-sm text-slate-500 dark:text-slate-400">{user.email}</Text>
         </View>
 
         {!editing ? (
           <Card className="gap-4 p-4">
             <Row label="First name" value={user.firstName || '—'} />
             <Row label="Last name" value={user.lastName || '—'} />
+            <Row label="Email" value={user.email || '—'} />
             <Row label="User ID" value={user.id} mono />
             <Button className="mt-2 dark:bg-primary-dark" onPress={startEdit}>
               Edit profile
@@ -121,6 +119,18 @@ export function ProfileScreen() {
                 onChangeText={setFirstName}
                 placeholder="First name"
                 placeholderTextColor="#94a3b8"
+                className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+              />
+            </View>
+            <View>
+              <Text className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Email</Text>
+              <TextInput
+                value={email}
+                onChangeText={setEmail}
+                placeholder="Email"
+                placeholderTextColor="#94a3b8"
+                autoCapitalize="none"
+                keyboardType="email-address"
                 className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
               />
             </View>
@@ -152,7 +162,7 @@ export function ProfileScreen() {
         )}
 
         <Text className="mx-2 mt-6 text-center text-xs text-slate-400 dark:text-slate-500">
-          Email and sign-in methods are managed in your Clerk account security settings.
+          Email and account details are managed in your TalentParse profile.
         </Text>
         </ScrollView>
       </KeyboardAvoidingView>

@@ -1,15 +1,15 @@
 import { MaterialIcons } from '@expo/vector-icons';
-import { useUser } from '@clerk/clerk-expo';
 import { useRouter } from 'expo-router';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
 import { AppHeader } from '@/components/AppHeader';
 import { Card } from '@/components/ui/Card';
+import { useAppAuth } from '@/providers/AuthProvider';
 import { useAppStore } from '@/store/useAppStore';
 
 export function DashboardScreen() {
   const router = useRouter();
-  const { user } = useUser();
+  const { user } = useAppAuth();
   const parsedCount = useAppStore((s) => s.uploadedResumes.length);
   const rankedCount = useAppStore((s) => s.rankings.length);
   const avg =

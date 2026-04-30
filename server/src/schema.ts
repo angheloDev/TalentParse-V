@@ -81,9 +81,14 @@ export const typeDefs = `#graphql
 
   type UserProfile {
     id: ID!
-    clerkUserId: String!
-    username: String!
     email: String!
+    firstName: String!
+    lastName: String!
+  }
+
+  type AuthPayload {
+    token: String!
+    user: UserProfile!
   }
 
   input UploadResumeInput {
@@ -94,6 +99,7 @@ export const typeDefs = `#graphql
 
   input ParseResumeInput {
     text: String!
+    fileName: String
   }
 
   input EmbeddingsInput {
@@ -104,10 +110,22 @@ export const typeDefs = `#graphql
     jobDescription: String!
   }
 
-  input UpsertUserProfileInput {
-    clerkUserId: String!
-    username: String!
+  input RegisterInput {
     email: String!
+    password: String!
+    firstName: String!
+    lastName: String!
+  }
+
+  input LoginInput {
+    email: String!
+    password: String!
+  }
+
+  input UpdateProfileInput {
+    email: String!
+    firstName: String!
+    lastName: String!
   }
 
   type Mutation {
@@ -115,10 +133,14 @@ export const typeDefs = `#graphql
     parseResume(input: ParseResumeInput!): ParsedResume!
     getEmbeddings(input: EmbeddingsInput!): String!
     rankCandidates(input: RankCandidatesInput!): [RankedCandidate!]!
-    upsertUserProfile(input: UpsertUserProfileInput!): UserProfile!
+    register(input: RegisterInput!): AuthPayload!
+    login(input: LoginInput!): AuthPayload!
+    logout: Boolean!
+    updateProfile(input: UpdateProfileInput!): UserProfile!
   }
 
   type Query {
     health: String!
+    me: UserProfile
   }
 `;

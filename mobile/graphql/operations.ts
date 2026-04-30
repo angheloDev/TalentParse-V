@@ -61,6 +61,80 @@ export const RANK_CANDIDATES = gql`
       matchScore
       avatarUrl
       initials
+      summary
+      breakdown {
+        technicalSkills
+        experienceLevel
+        domainKnowledge
+      }
+      skillAnalysis {
+        name
+        level
+        percent
+      }
+      keywords
+      experienceSummary {
+        title
+        company
+        period
+        bullets
+      }
+    }
+  }
+`;
+
+export const REGISTER = gql`
+  mutation Register($input: RegisterInput!) {
+    register(input: $input) {
+      token
+      user {
+        id
+        email
+        firstName
+        lastName
+      }
+    }
+  }
+`;
+
+export const LOGIN = gql`
+  mutation Login($input: LoginInput!) {
+    login(input: $input) {
+      token
+      user {
+        id
+        email
+        firstName
+        lastName
+      }
+    }
+  }
+`;
+
+export const LOGOUT = gql`
+  mutation Logout {
+    logout
+  }
+`;
+
+export const ME = gql`
+  query Me {
+    me {
+      id
+      email
+      firstName
+      lastName
+    }
+  }
+`;
+
+export const UPDATE_PROFILE = gql`
+  mutation UpdateProfile($input: UpdateProfileInput!) {
+    updateProfile(input: $input) {
+      id
+      email
+      firstName
+      lastName
     }
   }
 `;
