@@ -1,13 +1,14 @@
-import { useAuth } from '@clerk/clerk-expo';
 import { Redirect, Stack } from 'expo-router';
 import { View } from 'react-native';
 
+import { useAppAuth } from '@/providers/AuthProvider';
+
 export default function AppGroupLayout() {
-  const { isLoaded, userId } = useAuth();
+  const { isLoaded, user } = useAppAuth();
   if (!isLoaded) {
     return <View className="flex-1 bg-background-light dark:bg-background-dark" />;
   }
-  if (!userId) {
+  if (!user) {
     return <Redirect href="/sign-in" />;
   }
   return (

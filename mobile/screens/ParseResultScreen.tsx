@@ -1,5 +1,6 @@
 import { MaterialIcons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
+import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
@@ -12,6 +13,7 @@ import { useAppStore } from '@/store/useAppStore';
 import { useToastStore } from '@/store/useToastStore';
 
 export function ParseResultScreen() {
+  const router = useRouter();
   const [tab, setTab] = useState<'visual' | 'json'>('visual');
   const latest = useAppStore((s) => s.latestParsed);
   const lastFileName = useAppStore((s) => s.lastFileName);
@@ -139,7 +141,13 @@ export function ParseResultScreen() {
           </View>
         )}
         <View className="px-4 pt-2">
-          <Button className="flex-row gap-2 rounded-xl py-3 dark:bg-primary-dark">
+          <Button
+            className="flex-row gap-2 rounded-xl py-3 dark:bg-primary-dark"
+            onPress={() => {
+              useToastStore.getState().show({ title: 'Candidate profile saved', type: 'success' });
+              router.push('/jobs');
+            }}
+          >
             <MaterialIcons name="add-circle-outline" size={20} color="#fff" />
             <Text className="text-base font-semibold text-white">Save Candidate Profile</Text>
           </Button>

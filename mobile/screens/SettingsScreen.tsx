@@ -1,10 +1,10 @@
-import { useClerk } from '@clerk/clerk-expo';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
 import { AppHeader } from '@/components/AppHeader';
 import { Card } from '@/components/ui/Card';
+import { useAppAuth } from '@/providers/AuthProvider';
 import { useThemeStore } from '@/store/useThemeStore';
 import type { ThemePreference } from '@/utils/theme';
 
@@ -16,7 +16,7 @@ const modes: { id: ThemePreference; label: string }[] = [
 
 export function SettingsScreen() {
   const router = useRouter();
-  const { signOut } = useClerk();
+  const { signOut } = useAppAuth();
   const preference = useThemeStore((s) => s.preference);
   const setPreference = useThemeStore((s) => s.setPreference);
 
