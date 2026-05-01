@@ -83,6 +83,120 @@ export const RANK_CANDIDATES = gql`
   }
 `;
 
+export const SAVE_JOB_ANALYSIS = gql`
+  mutation SaveJobAnalysis($input: SaveJobAnalysisInput!) {
+    saveJobAnalysis(input: $input) {
+      id
+      industry
+      jobRole
+      requiredSkills
+      yearsOfExperience
+      strengths
+      otherRequirements
+      rankedCandidateCount
+      rankedResumes {
+        id
+        name
+        title
+        location
+        skills
+        experienceLevel
+        matchScore
+        summary
+        rankedAt
+      }
+      createdAt
+    }
+  }
+`;
+
+export const SAVE_JOB_RANKINGS = gql`
+  mutation SaveJobRankings($input: SaveJobRankingsInput!) {
+    saveJobRankings(input: $input) {
+      id
+      industry
+      jobRole
+      requiredSkills
+      yearsOfExperience
+      strengths
+      otherRequirements
+      rankedCandidateCount
+      rankedResumes {
+        id
+        name
+        title
+        location
+        skills
+        experienceLevel
+        matchScore
+        summary
+        rankedAt
+      }
+      createdAt
+    }
+  }
+`;
+
+export const DELETE_SAVED_JOB = gql`
+  mutation DeleteSavedJob($id: ID!) {
+    deleteSavedJob(id: $id)
+  }
+`;
+
+export const SAVED_JOBS = gql`
+  query SavedJobs {
+    savedJobs {
+      id
+      industry
+      jobRole
+      requiredSkills
+      yearsOfExperience
+      strengths
+      otherRequirements
+      rankedCandidateCount
+      rankedResumes {
+        id
+        name
+        title
+        location
+        skills
+        experienceLevel
+        matchScore
+        summary
+        rankedAt
+      }
+      createdAt
+    }
+  }
+`;
+
+export const SAVED_JOB = gql`
+  query SavedJob($id: ID!) {
+    savedJob(id: $id) {
+      id
+      industry
+      jobRole
+      requiredSkills
+      yearsOfExperience
+      strengths
+      otherRequirements
+      rankedCandidateCount
+      rankedResumes {
+        id
+        name
+        title
+        location
+        skills
+        experienceLevel
+        matchScore
+        summary
+        rankedAt
+      }
+      createdAt
+    }
+  }
+`;
+
 export const REGISTER = gql`
   mutation Register($input: RegisterInput!) {
     register(input: $input) {

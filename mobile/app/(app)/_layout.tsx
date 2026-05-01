@@ -16,6 +16,7 @@ export default function AppGroupLayout() {
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="parse-result" />
       <Stack.Screen name="candidate/[id]" />
+        <Stack.Screen name="job/[id]" />
       <Stack.Screen name="profile" options={{ presentation: 'card', animation: 'slide_from_right' }} />
     </Stack>
   );

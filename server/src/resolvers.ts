@@ -1,5 +1,6 @@
-import { UploadedResumeModel, UserProfileModel } from './models.js';
+import { SavedJobAnalysisModel, UploadedResumeModel, UserProfileModel } from './models.js';
 import crypto from 'node:crypto';
+import mongoose from 'mongoose';
 
 const KNOWN_SKILLS = [
   'javascript',
@@ -44,9 +45,35 @@ function normalizeSkill(raw: string) {
 function extractSkills(text: string) {
   const lower = text.toLowerCase();
   const hits = new Set<string>();
+
+  // Start with known-skill dictionary matches.
   for (const skill of KNOWN_SKILLS) {
     if (lower.includes(skill)) hits.add(normalizeSkill(skill));
   }
+
+  // Then pull likely skills from "skills" sections and technical tokens.
+  const fromSkillsSection = text.match(/(?:skills?|tech(?:nical)? stack)\s*[:\-]\s*([^\n]+)/gi) ?? [];
+  for (const row of fromSkillsSection) {
+    const section = row.split(/[:\-]/).slice(1).join(' ');
+    for (const token of section.split(/[,|/]/)) {
+      const cleaned = token.trim();
+      if (cleaned.length >= 2 && cleaned.length <= 40) hits.add(normalizeSkill(cleaned));
+    }
+  }
+
+  const technicalTokens = text.match(/\b[a-zA-Z][a-zA-Z0-9+.#-]{1,24}\b/g) ?? [];
+  for (const token of technicalTokens) {
+    const lowerToken = token.toLowerCase();
+    if (
+      KNOWN_SKILLS.includes(lowerToken) ||
+      /^(react|node|nestjs|next|typescript|javascript|python|java|graphql|docker|kubernetes|aws|azure|gcp|sql|mongodb|postgresql)$/i.test(
+        token,
+      )
+    ) {
+      hits.add(normalizeSkill(token));
+    }
+  }
+
   return Array.from(hits);
 }
 
@@ -109,8 +136,8 @@ function parseResumeText(text: string) {
   };
 }
 
-function scoreResume(jobDescription: string, parsed: ReturnType<typeof parseResumeText>) {
-  const jdSkills = extractSkills(jobDescription);
+function scoreResume(jobRole: string, parsed: ReturnType<typeof parseResumeText>) {
+  const jdSkills = extractSkills(jobRole);
   const candidateSkills = parsed.skills.map((skill) => skill.toLowerCase());
   const matched = jdSkills.filter((skill) => candidateSkills.includes(skill.toLowerCase()));
   const technicalSkills = jdSkills.length ? Math.round((matched.length / jdSkills.length) * 100) : 60;
@@ -123,6 +150,19 @@ function scoreResume(jobDescription: string, parsed: ReturnType<typeof parseResu
 
 type ParsedResumeData = ReturnType<typeof parseResumeText>;
 type ResolverContext = { token: string | null };
+
+async function extractPdfText(pdfBase64: string) {
+  const clean = pdfBase64.replace(/^data:application\/pdf;base64,/, '');
+  const buffer = Buffer.from(clean, 'base64');
+  const pdfParseModule = await import('pdf-parse');
+  const parser = new pdfParseModule.PDFParse({ data: buffer });
+  try {
+    const result = await parser.getText();
+    return (result.text ?? '').trim();
+  } finally {
+    await parser.destroy();
+  }
+}
 
 function hashPassword(password: string, salt: string) {
   return crypto.scryptSync(password, salt, 64).toString('hex');
@@ -146,6 +186,52 @@ function sanitizeUser(user: {
   };
 }
 
+function sanitizeSavedJob(job: {
+  _id: unknown;
+  industry: string;
+  jobRole: string;
+  requiredSkills?: string[];
+  yearsOfExperience?: string;
+  strengths?: string;
+  otherRequirements?: string;
+  rankedCandidateCount: number;
+  rankedResumes?: Array<{
+    id: string;
+    name: string;
+    title?: string | null;
+    location?: string | null;
+    skills?: string[];
+    experienceLevel: string;
+    matchScore: number;
+    summary?: string | null;
+    rankedAt?: Date;
+  }>;
+  createdAt?: Date;
+}) {
+  return {
+    id: String(job._id),
+    industry: job.industry,
+    jobRole: job.jobRole,
+    requiredSkills: job.requiredSkills ?? [],
+    yearsOfExperience: job.yearsOfExperience ?? '',
+    strengths: job.strengths ?? '',
+    otherRequirements: job.otherRequirements ?? '',
+    rankedCandidateCount: job.rankedCandidateCount,
+    rankedResumes: (job.rankedResumes ?? []).map((ranked) => ({
+      id: ranked.id,
+      name: ranked.name,
+      title: ranked.title ?? null,
+      location: ranked.location ?? null,
+      skills: ranked.skills ?? [],
+      experienceLevel: ranked.experienceLevel,
+      matchScore: ranked.matchScore,
+      summary: ranked.summary ?? null,
+      rankedAt: (ranked.rankedAt ?? new Date()).toISOString(),
+    })),
+    createdAt: (job.createdAt ?? new Date()).toISOString(),
+  };
+}
+
 async function getAuthedUser(token: string | null) {
   if (!token) return null;
   return UserProfileModel.findOne({
@@ -161,16 +247,35 @@ export const resolvers = {
       const user = await getAuthedUser(context.token);
       return user ? sanitizeUser(user) : null;
     },
+    savedJobs: async (_: unknown, __: unknown, context: ResolverContext) => {
+      const user = await getAuthedUser(context.token);
+      if (!user) throw new Error('Unauthorized');
+      const rows = await SavedJobAnalysisModel.find({ userId: user._id }).sort({ createdAt: -1 }).lean();
+      return rows.map((row) => sanitizeSavedJob(row as unknown as Parameters<typeof sanitizeSavedJob>[0]));
+    },
+    savedJob: async (_: unknown, { id }: { id: string }, context: ResolverContext) => {
+      const user = await getAuthedUser(context.token);
+      if (!user) throw new Error('Unauthorized');
+      if (!mongoose.Types.ObjectId.isValid(id)) return null;
+      const row = await SavedJobAnalysisModel.findOne({ _id: id, userId: user._id }).lean();
+      if (!row) return null;
+      return sanitizeSavedJob(row as unknown as Parameters<typeof sanitizeSavedJob>[0]);
+    },
   },
   Mutation: {
     uploadResume: async (
       _: unknown,
-      { input }: { input: { fileName: string; mimeType: string; uri: string } },
+      { input }: { input: { fileName: string; mimeType: string; uri: string; fileHash: string } },
     ) => {
+      const incomingHash = input.fileHash.trim();
+      if (!incomingHash) throw new Error('Unable to fingerprint resume file.');
+      const existing = await UploadedResumeModel.findOne({ fileHash: incomingHash }).lean();
+      if (existing) throw new Error('This resume was already scanned.');
       const saved = await UploadedResumeModel.create({
         fileName: input.fileName,
         mimeType: input.mimeType,
         uri: input.uri,
+        fileHash: incomingHash,
       });
       return {
         id: String(saved._id),
@@ -178,8 +283,15 @@ export const resolvers = {
         mimeType: saved.mimeType,
       };
     },
-    parseResume: async (_: unknown, { input }: { input: { text: string; fileName?: string } }) => {
-      const source = input.text.trim();
+    parseResume: async (
+      _: unknown,
+      { input }: { input: { text: string; fileName?: string; pdfBase64?: string; mimeType?: string } },
+    ) => {
+      let source = input.text.trim();
+      const isPdf = (input.mimeType ?? '').toLowerCase() === 'application/pdf';
+      if (!source && isPdf && input.pdfBase64) {
+        source = await extractPdfText(input.pdfBase64);
+      }
       const parsed = parseResumeText(source.length ? source : input.fileName ?? 'Unknown Candidate');
       if (input.fileName) {
         await UploadedResumeModel.findOneAndUpdate(
@@ -205,11 +317,11 @@ export const resolvers = {
           .join('|'),
       });
     },
-    rankCandidates: async (_: unknown, { input }: { input: { jobDescription: string } }) => {
+    rankCandidates: async (_: unknown, { input }: { input: { jobRole: string } }) => {
       const resumes = await UploadedResumeModel.find().sort({ createdAt: -1 }).limit(50).lean();
       const candidates = resumes.map((resume) => {
         const parsed = (resume.parsed as ParsedResumeData | undefined) ?? parseResumeText(resume.rawText || resume.fileName);
-        const score = scoreResume(input.jobDescription, parsed);
+        const score = scoreResume(input.jobRole, parsed);
         const name = `${parsed.personalInfo.firstName} ${parsed.personalInfo.lastName}`.trim();
         return {
           id: String(resume._id),
@@ -307,6 +419,97 @@ export const resolvers = {
       authed.lastName = input.lastName.trim();
       await authed.save();
       return sanitizeUser(authed);
+    },
+    saveJobAnalysis: async (
+      _: unknown,
+      {
+        input,
+      }: {
+        input: {
+          industry: string;
+          jobRole: string;
+          requiredSkills: string[];
+          yearsOfExperience?: string;
+          strengths?: string;
+          otherRequirements?: string;
+          rankedCandidateCount: number;
+        };
+      },
+      context: ResolverContext,
+    ) => {
+      const user = await getAuthedUser(context.token);
+      if (!user) throw new Error('Unauthorized');
+      const saved = await SavedJobAnalysisModel.create({
+        userId: user._id,
+        industry: input.industry.trim(),
+        jobRole: input.jobRole.trim(),
+        requiredSkills: input.requiredSkills.map((s) => s.trim()).filter(Boolean),
+        yearsOfExperience: input.yearsOfExperience?.trim() ?? '',
+        strengths: input.strengths?.trim() ?? '',
+        otherRequirements: input.otherRequirements?.trim() ?? '',
+        rankedCandidateCount: Math.max(0, input.rankedCandidateCount),
+        rankedResumes: [],
+      });
+      return sanitizeSavedJob(saved);
+    },
+    saveJobRankings: async (
+      _: unknown,
+      {
+        input,
+      }: {
+        input: {
+          jobId: string;
+          rankings: Array<{
+            id: string;
+            name: string;
+            title?: string | null;
+            location?: string | null;
+            skills: string[];
+            experienceLevel: string;
+            matchScore: number;
+            summary?: string | null;
+          }>;
+        };
+      },
+      context: ResolverContext,
+    ) => {
+      const user = await getAuthedUser(context.token);
+      if (!user) throw new Error('Unauthorized');
+      if (!mongoose.Types.ObjectId.isValid(input.jobId)) throw new Error('Invalid job id');
+
+      const normalized = [...input.rankings]
+        .map((ranked) => ({
+          id: String(ranked.id),
+          name: ranked.name.trim(),
+          title: ranked.title?.trim() || null,
+          location: ranked.location?.trim() || null,
+          skills: ranked.skills.map((s) => s.trim()).filter(Boolean),
+          experienceLevel: ranked.experienceLevel.trim(),
+          matchScore: Math.max(0, ranked.matchScore),
+          summary: ranked.summary?.trim() || null,
+          rankedAt: new Date(),
+        }))
+        .sort((a, b) => b.matchScore - a.matchScore);
+
+      const updated = await SavedJobAnalysisModel.findOneAndUpdate(
+        { _id: input.jobId, userId: user._id },
+        {
+          $set: {
+            rankedResumes: normalized,
+            rankedCandidateCount: normalized.length,
+          },
+        },
+        { new: true },
+      );
+      if (!updated) throw new Error('Saved job not found');
+      return sanitizeSavedJob(updated);
+    },
+    deleteSavedJob: async (_: unknown, { id }: { id: string }, context: ResolverContext) => {
+      const user = await getAuthedUser(context.token);
+      if (!user) throw new Error('Unauthorized');
+      if (!mongoose.Types.ObjectId.isValid(id)) return false;
+      const deleted = await SavedJobAnalysisModel.findOneAndDelete({ _id: id, userId: user._id });
+      return Boolean(deleted);
     },
   },
 };

@@ -61,3 +61,28 @@ export type UploadedResume = {
   uri?: string;
   uploadedAt: string;
 };
+
+export type SavedJobAnalysis = {
+  id: string;
+  industry: string;
+  jobRole: string;
+  requiredSkills: string[];
+  yearsOfExperience: string;
+  strengths: string;
+  otherRequirements: string;
+  rankedCandidateCount: number;
+  rankedResumes: SavedRankedResume[];
+  createdAt: string;
+};
+
+export type SavedRankedResume = {
+  id: string;
+  name: string;
+  title?: string | null;
+  location?: string | null;
+  skills: string[];
+  experienceLevel: string;
+  matchScore: number;
+  summary?: string | null;
+  rankedAt: string;
+};

@@ -5,6 +5,7 @@ const UploadedResumeSchema = new Schema(
     fileName: { type: String, required: true, trim: true },
     mimeType: { type: String, required: true, trim: true },
     uri: { type: String, required: true, trim: true },
+    fileHash: { type: String, required: true, trim: true, index: true, unique: true },
     rawText: { type: String, default: '' },
     parsed: {
       personalInfo: {
@@ -55,8 +56,36 @@ const UserProfileSchema = new Schema(
   { timestamps: true },
 );
 
+const SavedJobAnalysisSchema = new Schema(
+  {
+    userId: { type: Schema.Types.ObjectId, required: true, index: true, ref: 'UserProfile' },
+    industry: { type: String, required: true, trim: true },
+    jobRole: { type: String, required: true, trim: true },
+    requiredSkills: [{ type: String, default: [] }],
+    yearsOfExperience: { type: String, default: '', trim: true },
+    strengths: { type: String, default: '', trim: true },
+    otherRequirements: { type: String, default: '', trim: true },
+    rankedCandidateCount: { type: Number, required: true, min: 0 },
+    rankedResumes: [
+      {
+        id: { type: String, required: true, trim: true },
+        name: { type: String, required: true, trim: true },
+        title: { type: String, default: null },
+        location: { type: String, default: null },
+        skills: [{ type: String }],
+        experienceLevel: { type: String, required: true, trim: true },
+        matchScore: { type: Number, required: true, min: 0 },
+        summary: { type: String, default: null },
+        rankedAt: { type: Date, required: true },
+      },
+    ],
+  },
+  { timestamps: true },
+);
+
 export type UploadedResumeDocument = InferSchemaType<typeof UploadedResumeSchema>;
 export type UserProfileDocument = InferSchemaType<typeof UserProfileSchema>;
+export type SavedJobAnalysisDocument = InferSchemaType<typeof SavedJobAnalysisSchema>;
 
 export const UploadedResumeModel =
   mongoose.models.UploadedResume ||
@@ -64,3 +93,7 @@ export const UploadedResumeModel =
 
 export const UserProfileModel =
   mongoose.models.UserProfile || mongoose.model<UserProfileDocument>('UserProfile', UserProfileSchema);
+
+export const SavedJobAnalysisModel =
+  mongoose.models.SavedJobAnalysis ||
+  mongoose.model<SavedJobAnalysisDocument>('SavedJobAnalysis', SavedJobAnalysisSchema);
