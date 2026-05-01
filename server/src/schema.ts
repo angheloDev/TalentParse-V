@@ -91,15 +91,43 @@ export const typeDefs = `#graphql
     user: UserProfile!
   }
 
+  type SavedJob {
+    id: ID!
+    industry: String!
+    jobRole: String!
+    requiredSkills: [String!]!
+    yearsOfExperience: String!
+    strengths: String!
+    otherRequirements: String!
+    rankedCandidateCount: Int!
+    rankedResumes: [SavedRankedResume!]!
+    createdAt: String!
+  }
+
+  type SavedRankedResume {
+    id: ID!
+    name: String!
+    title: String
+    location: String
+    skills: [String!]!
+    experienceLevel: String!
+    matchScore: Float!
+    summary: String
+    rankedAt: String!
+  }
+
   input UploadResumeInput {
     fileName: String!
     mimeType: String!
     uri: String!
+    fileHash: String!
   }
 
   input ParseResumeInput {
     text: String!
     fileName: String
+    pdfBase64: String
+    mimeType: String
   }
 
   input EmbeddingsInput {
@@ -107,7 +135,7 @@ export const typeDefs = `#graphql
   }
 
   input RankCandidatesInput {
-    jobDescription: String!
+    jobRole: String!
   }
 
   input RegisterInput {
@@ -128,6 +156,32 @@ export const typeDefs = `#graphql
     lastName: String!
   }
 
+  input SaveJobAnalysisInput {
+    industry: String!
+    jobRole: String!
+    requiredSkills: [String!]!
+    yearsOfExperience: String
+    strengths: String
+    otherRequirements: String
+    rankedCandidateCount: Int!
+  }
+
+  input SaveJobRankingsInput {
+    jobId: ID!
+    rankings: [SavedRankingInput!]!
+  }
+
+  input SavedRankingInput {
+    id: ID!
+    name: String!
+    title: String
+    location: String
+    skills: [String!]!
+    experienceLevel: String!
+    matchScore: Float!
+    summary: String
+  }
+
   type Mutation {
     uploadResume(input: UploadResumeInput!): UploadResult!
     parseResume(input: ParseResumeInput!): ParsedResume!
@@ -137,10 +191,15 @@ export const typeDefs = `#graphql
     login(input: LoginInput!): AuthPayload!
     logout: Boolean!
     updateProfile(input: UpdateProfileInput!): UserProfile!
+    saveJobAnalysis(input: SaveJobAnalysisInput!): SavedJob!
+    saveJobRankings(input: SaveJobRankingsInput!): SavedJob!
+    deleteSavedJob(id: ID!): Boolean!
   }
 
   type Query {
     health: String!
     me: UserProfile
+    savedJobs: [SavedJob!]!
+    savedJob(id: ID!): SavedJob
   }
 `;

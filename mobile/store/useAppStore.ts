@@ -11,13 +11,26 @@ export type CandidateFiltersState = {
   location: string;
 };
 
+export type SavedJobAnalysis = {
+  id: string;
+  industry: string;
+  jobRole: string;
+  requiredSkills: string[];
+  yearsOfExperience: string;
+  strengths: string;
+  otherRequirements: string;
+  rankedCandidateCount: number;
+  createdAt: string;
+};
+
 type AppState = {
   uploadedResumes: UploadedResume[];
   latestParsed: ParsedResume | null;
   lastFileName: string | null;
   uploadProgress: number;
   parseProgress: number;
-  jobDescription: string;
+  jobRole: string;
+  savedJobs: SavedJobAnalysis[];
   rankings: RankedCandidate[];
   embeddingsReady: boolean;
   candidateTab: CandidateTab;
@@ -28,7 +41,8 @@ type AppState = {
   setLatestParsed: (p: ParsedResume | null) => void;
   setLastFileName: (n: string | null) => void;
   addUploadedResume: (r: UploadedResume) => void;
-  setJobDescription: (t: string) => void;
+  addSavedJob: (job: SavedJobAnalysis) => void;
+  setJobRole: (t: string) => void;
   setRankings: (r: RankedCandidate[]) => void;
   setEmbeddingsReady: (v: boolean) => void;
   setCandidateTab: (t: CandidateTab) => void;
@@ -50,7 +64,8 @@ export const useAppStore = create<AppState>((set) => ({
   lastFileName: null,
   uploadProgress: 0,
   parseProgress: 0,
-  jobDescription: '',
+  jobRole: '',
+  savedJobs: [],
   rankings: [],
   embeddingsReady: false,
   candidateTab: 'top',
@@ -69,7 +84,11 @@ export const useAppStore = create<AppState>((set) => ({
   setLastFileName: (lastFileName) => set({ lastFileName }),
   addUploadedResume: (r) =>
     set((s) => ({ uploadedResumes: [r, ...s.uploadedResumes].slice(0, 50) })),
-  setJobDescription: (jobDescription) => set({ jobDescription }),
+  addSavedJob: (job) =>
+    set((s) => ({
+      savedJobs: [job, ...s.savedJobs].slice(0, 100),
+    })),
+  setJobRole: (jobRole) => set({ jobRole }),
   setRankings: (rankings) =>
     set((s) => {
       const next = [...rankings].sort((a, b) => b.matchScore - a.matchScore);
@@ -94,7 +113,8 @@ export const useAppStore = create<AppState>((set) => ({
       lastFileName: null,
       uploadProgress: 0,
       parseProgress: 0,
-      jobDescription: '',
+      jobRole: '',
+      savedJobs: [],
       rankings: [],
       embeddingsReady: false,
       shortlistedIds: [],
