@@ -55,7 +55,23 @@ const authLink = setContext((_, { headers }) => {
 
 export const apolloClient = new ApolloClient({
   link: authLink.concat(new HttpLink({ uri })),
-  cache: new InMemoryCache(),
+  cache: new InMemoryCache({
+    typePolicies: {
+      // Rank rows are job-specific; same resume id must not share one normalized entity across jobs.
+      SavedRankedResume: {
+        keyFields: false,
+      },
+      SavedJob: {
+        fields: {
+          rankedResumes: {
+            merge(_existing, incoming) {
+              return incoming;
+            },
+          },
+        },
+      },
+    },
+  }),
   defaultOptions: {
     watchQuery: { fetchPolicy: 'cache-and-network' },
     query: { fetchPolicy: 'network-only' },

@@ -1,4 +1,5 @@
 import { SavedJobAnalysisModel, UploadedResumeModel, UserProfileModel } from './models.js';
+import { parseResumeViaPythonService } from './services/pythonResumeParser.js';
 import crypto from 'node:crypto';
 import mongoose from 'mongoose';
 
@@ -27,6 +28,26 @@ const KNOWN_SKILLS = [
   'nestjs',
 ];
 
+const SKILL_SYNONYMS: Record<string, string[]> = {
+  JavaScript: ['javascript', 'js', 'ecmascript'],
+  TypeScript: ['typescript', 'ts'],
+  React: ['react', 'reactjs', 'react.js'],
+  'Node.js': ['node', 'nodejs', 'node.js'],
+  Python: ['python', 'py'],
+  Java: ['java'],
+  SQL: ['sql', 'postgresql', 'mysql', 'mssql'],
+  MongoDB: ['mongodb', 'mongo'],
+  GraphQL: ['graphql', 'gql'],
+  Docker: ['docker', 'containerization', 'containers'],
+  Kubernetes: ['kubernetes', 'k8s'],
+  AWS: ['aws', 'amazon web services'],
+  Azure: ['azure', 'microsoft azure'],
+  GCP: ['gcp', 'google cloud', 'google cloud platform'],
+  Agile: ['agile', 'scrum', 'kanban'],
+  'Next.js': ['next', 'nextjs', 'next.js'],
+  NestJS: ['nestjs', 'nest'],
+};
+
 function toTitle(word: string) {
   return word
     .split(/[\s.-]+/)
@@ -42,13 +63,28 @@ function normalizeSkill(raw: string) {
   return toTitle(raw);
 }
 
+function normalizeToken(input: string) {
+  return input.toLowerCase().replace(/[^a-z0-9+.#]/g, '');
+}
+
+function canonicalizeSkill(raw: string) {
+  const token = normalizeToken(raw);
+  for (const [canonical, variants] of Object.entries(SKILL_SYNONYMS)) {
+    if (variants.some((variant) => normalizeToken(variant) === token)) return canonical;
+  }
+  return normalizeSkill(raw);
+}
+
 function extractSkills(text: string) {
   const lower = text.toLowerCase();
   const hits = new Set<string>();
 
   // Start with known-skill dictionary matches.
   for (const skill of KNOWN_SKILLS) {
-    if (lower.includes(skill)) hits.add(normalizeSkill(skill));
+    if (lower.includes(skill)) hits.add(canonicalizeSkill(skill));
+  }
+  for (const [canonical, variants] of Object.entries(SKILL_SYNONYMS)) {
+    if (variants.some((variant) => lower.includes(variant.toLowerCase()))) hits.add(canonical);
   }
 
   // Then pull likely skills from "skills" sections and technical tokens.
@@ -57,7 +93,7 @@ function extractSkills(text: string) {
     const section = row.split(/[:\-]/).slice(1).join(' ');
     for (const token of section.split(/[,|/]/)) {
       const cleaned = token.trim();
-      if (cleaned.length >= 2 && cleaned.length <= 40) hits.add(normalizeSkill(cleaned));
+      if (cleaned.length >= 2 && cleaned.length <= 40) hits.add(canonicalizeSkill(cleaned));
     }
   }
 
@@ -70,11 +106,23 @@ function extractSkills(text: string) {
         token,
       )
     ) {
-      hits.add(normalizeSkill(token));
+      hits.add(canonicalizeSkill(token));
     }
   }
 
   return Array.from(hits);
+}
+
+function extractMeaningKeywords(text: string) {
+  const words = text
+    .toLowerCase()
+    .split(/[^a-z0-9+.#]+/i)
+    .filter((word) => word.length > 2);
+  const keywordSet = new Set<string>();
+  for (const word of words) {
+    keywordSet.add(normalizeToken(word));
+  }
+  return keywordSet;
 }
 
 function extractEmail(text: string) {
@@ -85,6 +133,194 @@ function extractPhone(text: string) {
   return text.match(/(\+?\d[\d\s\-()]{7,}\d)/)?.[0] ?? null;
 }
 
+/** Prefer a plausible human name line near the top (not URLs, addresses, section headers). */
+function extractNameFromLines(text: string): { firstName: string; lastName: string } | null {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 45);
+  for (const line of lines) {
+    if (line.length < 4 || line.length > 72) continue;
+    if (/@|http:\/\/|www\.|linkedin|github|phone|tel:|email|curriculum|vitae|^\s*resume\s*$/i.test(line)) continue;
+    if (/^\d+[\d\s,]+(Street|Road|Lane|Avenue|Drive|Close|Way)\b/i.test(line)) continue;
+    const m = line.match(/^([A-Z][a-zA-Z'’-]+)\s+([A-Z][a-zA-Z'’-]+(?:\s+[A-Z][a-zA-Z'’-]+){0,2})$/);
+    if (m) return { firstName: m[1], lastName: m[2] };
+  }
+  return null;
+}
+
+function extractLocationLine(text: string): string | null {
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const uk =
+    lines.find((line) =>
+      /\d+[\s,]+[\w\s.'’-]+(?:Street|Road|Lane|Avenue|Drive|Close|Way)\b.*(?:UK|United Kingdom|England|Scotland|Wales)/i.test(
+        line,
+      ),
+    ) ?? null;
+  if (uk) return uk;
+  return (
+    lines.find((line) => /(remote|, [A-Z]{2}$|united states|philippines|singapore)/i.test(line)) ?? null
+  );
+}
+
+function extractPrimaryJobTitle(text: string): string | null {
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  for (const line of lines) {
+    if (line.length < 8 || line.length > 140) continue;
+    if (/^(skills|education|experience|employment|work history|projects|references)/i.test(line)) continue;
+    if (
+      /\b(developer|engineer|manager|analyst|consultant|designer|architect|specialist|director|scientist|intern|coordinator|administrator)\b/i.test(
+        line,
+      )
+    ) {
+      return line.replace(/^[-•*\s]+/, '').slice(0, 120);
+    }
+  }
+  return null;
+}
+
+type ParsedEducationRow = { institution: string; degree: string; year: number | null };
+type ParsedProjectRow = { name: string; description: string; url: string | null };
+
+function normalizeResumeSectionHeader(line: string): string | null {
+  const l = line.trim();
+  if (l.length > 88) return null;
+  if (/^(education|academic\s+background|qualifications)\s*:?\s*$/i.test(l)) return 'education';
+  if (/^(projects?|project\s+experience|key\s+projects|portfolio|selected\s+projects)\s*:?\s*$/i.test(l))
+    return 'projects';
+  if (
+    /^(achievements?|awards?|honors?|accomplishments|certifications?|publications?)\s*:?\s*$/i.test(l)
+  )
+    return 'achievements';
+  return null;
+}
+
+/** Split résumé body into sections using common heading lines. */
+function splitResumeSections(fullText: string): Record<string, string> {
+  const lines = fullText.split(/\r?\n/);
+  const buckets: Record<string, string[]> = {};
+  let cur: string | null = null;
+  for (const raw of lines) {
+    const trimmed = raw.trim();
+    if (/^[-_=]{4,}\s*$/.test(trimmed)) continue;
+    const key = normalizeResumeSectionHeader(trimmed);
+    if (key) {
+      cur = key;
+      continue;
+    }
+    if (cur) {
+      if (!buckets[cur]) buckets[cur] = [];
+      buckets[cur].push(raw);
+    }
+  }
+  return Object.fromEntries(Object.entries(buckets).map(([k, arr]) => [k, arr.join('\n').trim()]));
+}
+
+function parseEducationSection(section: string): ParsedEducationRow[] {
+  const entries: ParsedEducationRow[] = [];
+  const rawLines = section.split(/\n/).map((l) => l.trim()).filter(Boolean);
+  for (let line of rawLines) {
+    line = line.replace(/^[•\-*◦‣]\s*/, '').replace(/^\d+[.)]\s*/, '');
+    if (line.length < 4) continue;
+    const years = line.match(/\b(19|20)\d{2}\b/g);
+    const year = years?.length ? parseInt(years[years.length - 1]!, 10) : null;
+    let institution = '';
+    let degree = '';
+
+    if (/\s[|｜]\s|\s[—–]\s/.test(line)) {
+      const parts = line.split(/\s*[|｜]\s*|\s[—–]\s/).map((p) => p.trim()).filter(Boolean);
+      if (parts.length >= 2) {
+        degree = parts[0].replace(/\s*\(?\d{4}\)?\s*$/u, '').trim();
+        institution = parts.slice(1).join(' · ').replace(/\s*\(?\d{4}\)?\s*$/u, '').trim();
+      }
+    } else if (line.includes(',')) {
+      const commaParts = line.split(',').map((p) => p.trim()).filter(Boolean);
+      if (commaParts.length >= 2) {
+        degree = commaParts[0];
+        institution = commaParts.slice(1).join(', ').replace(/\b(19|20)\d{2}\b/g, '').trim();
+      }
+    } else {
+      degree = line.replace(/\b(19|20)\d{2}\b/g, '').trim();
+      institution = 'See resume';
+    }
+
+    if (degree || institution) {
+      entries.push({
+        institution: institution || 'See resume',
+        degree: degree || 'See resume',
+        year,
+      });
+    }
+  }
+  return entries;
+}
+
+function extractLooseEducationLines(fullText: string): ParsedEducationRow[] {
+  const lines = fullText.split(/\n/).map((l) => l.trim()).filter(Boolean);
+  const hits: string[] = [];
+  for (const line of lines) {
+    if (line.length > 220) continue;
+    if (
+      /\b(University|College|Institute|Polytechnic|School\s+of)\b/i.test(line) ||
+      /\b(Bachelor|B\.?S\.?|B\.?A\.?|Master|M\.?S\.?|M\.?A\.?|MBA|Ph\.?D\.?|Associate)\b/i.test(line)
+    ) {
+      hits.push(line.replace(/^[•\-*◦‣]\s*/, '').replace(/^\d+[.)]\s*/, ''));
+    }
+  }
+  const dedup = [...new Set(hits)];
+  return dedup.length ? parseEducationSection(dedup.join('\n')) : [];
+}
+
+function parseAchievementsSection(section: string): string[] {
+  const out: string[] = [];
+  const lines = section.split(/\n/).map((l) => l.trim()).filter(Boolean);
+  for (let line of lines) {
+    line = line.replace(/^[•\-*◦‣]\s*/, '').replace(/^\d+[.)]\s*/, '').trim();
+    if (line.length > 2 && line.length < 600) out.push(line);
+    if (out.length >= 45) break;
+  }
+  return out;
+}
+
+function parseProjectsSection(section: string): ParsedProjectRow[] {
+  const projects: ParsedProjectRow[] = [];
+  const paras = section.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+  if (paras.length > 1) {
+    for (const para of paras) {
+      const lines = para.split(/\n/).map((l) => l.trim()).filter(Boolean);
+      if (!lines.length) continue;
+      const urlMatch = para.match(/https?:\/\/[^\s)]+/);
+      const name = lines[0].slice(0, 160);
+      const description = lines.slice(1).join('\n').trim() || name;
+      projects.push({
+        name,
+        description: description.slice(0, 2500),
+        url: urlMatch?.[0] ?? null,
+      });
+      if (projects.length >= 22) break;
+    }
+  }
+  if (!projects.length) {
+    const chunks = section.split(/\n(?=\s*[•\-*◦‣]|\s*\d+[.)])/);
+    for (const chunk of chunks) {
+      const cleaned = chunk.replace(/^[•\-*◦‣\s]+|^\s*\d+[.)]\s*/m, '').trim();
+      if (cleaned.length < 4) continue;
+      const urlMatch = cleaned.match(/https?:\/\/[^\s)]+/);
+      const lines = cleaned.split(/\n/).map((l) => l.trim()).filter(Boolean);
+      const name = (lines[0] ?? cleaned).slice(0, 160);
+      const description = lines.slice(1).join('\n').trim() || name;
+      projects.push({
+        name,
+        description: description.slice(0, 2500),
+        url: urlMatch?.[0] ?? null,
+      });
+      if (projects.length >= 22) break;
+    }
+  }
+  return projects;
+}
+
 function parseResumeText(text: string) {
   const startedAt = Date.now();
   const lines = text
@@ -92,14 +328,29 @@ function parseResumeText(text: string) {
     .map((line) => line.trim())
     .filter(Boolean);
   const firstLine = lines[0] ?? 'Unknown Candidate';
-  const [firstName = 'Unknown', ...restName] = firstLine.split(/\s+/);
-  const lastName = restName.join(' ') || 'Candidate';
+  const [flFirst = 'Unknown', ...flRest] = firstLine.split(/\s+/);
+  const named = extractNameFromLines(text);
+  const firstName = named?.firstName ?? flFirst;
+  const lastName = named?.lastName ?? (flRest.join(' ') || 'Candidate');
   const skills = extractSkills(text);
-  const hasSeniorSignals = /(senior|lead|principal|8\+?\s*years|10\+?\s*years)/i.test(text);
-  const hasMidSignals = /(mid|3\+?\s*years|4\+?\s*years|5\+?\s*years)/i.test(text);
+  const hasSeniorSignals = /(senior|lead|principal|staff|8\+?\s*years|10\+?\s*years)/i.test(text);
+  const hasMidSignals = /(mid|intermediate|3\+?\s*years|4\+?\s*years|5\+?\s*years|6\s*years)/i.test(text);
   const experienceLevel = hasSeniorSignals ? 'Senior' : hasMidSignals ? 'Mid' : 'Junior';
-  const location =
-    lines.find((line) => /(remote|, [A-Z]{2}$|united states|philippines|singapore)/i.test(line)) ?? null;
+  const location = extractLocationLine(text);
+  const titleFromText =
+    extractPrimaryJobTitle(text) ?? (experienceLevel === 'Senior' ? 'Senior Professional' : 'Professional');
+
+  const sections = splitResumeSections(text);
+  let educationList = sections.education ? parseEducationSection(sections.education) : [];
+  if (!educationList.length) {
+    educationList = extractLooseEducationLines(text);
+  }
+  if (!educationList.length) {
+    educationList = [{ institution: 'Not specified', degree: 'Not specified', year: null }];
+  }
+
+  const achievements = sections.achievements ? parseAchievementsSection(sections.achievements) : [];
+  const projects = sections.projects ? parseProjectsSection(sections.projects) : [];
 
   return {
     personalInfo: {
@@ -112,23 +363,19 @@ function parseResumeText(text: string) {
     skills,
     techStack: skills.slice(0, 6),
     experienceLevel,
-    education: [
-      {
-        institution: 'Not specified',
-        degree: 'Not specified',
-        year: null,
-      },
-    ],
+    education: educationList,
     experience: [
       {
         company: 'Not specified',
-        title: experienceLevel === 'Senior' ? 'Senior Professional' : 'Professional',
+        title: titleFromText,
         startDate: null,
         endDate: null,
         current: true,
         duration: null,
       },
     ],
+    achievements,
+    projects,
     meta: {
       confidenceScore: skills.length ? 0.9 : 0.72,
       processingTimeMs: Date.now() - startedAt,
@@ -136,11 +383,28 @@ function parseResumeText(text: string) {
   };
 }
 
-function scoreResume(jobRole: string, parsed: ReturnType<typeof parseResumeText>) {
-  const jdSkills = extractSkills(jobRole);
-  const candidateSkills = parsed.skills.map((skill) => skill.toLowerCase());
-  const matched = jdSkills.filter((skill) => candidateSkills.includes(skill.toLowerCase()));
-  const technicalSkills = jdSkills.length ? Math.round((matched.length / jdSkills.length) * 100) : 60;
+function scoreResume(jobRole: string, parsed: ReturnType<typeof parseResumeText>, resumePlainText = '') {
+  const jdSkills = extractSkills(jobRole).map(canonicalizeSkill);
+  const candidateSkills = parsed.skills.map(canonicalizeSkill);
+  const candidateSkillSet = new Set(candidateSkills);
+  const matched = jdSkills.filter((skill) => candidateSkillSet.has(skill));
+
+  const requirementKeywords = extractMeaningKeywords(jobRole);
+  const resumeKeywords = extractMeaningKeywords(
+    [
+      resumePlainText,
+      parsed.skills.join(' '),
+      parsed.techStack.join(' '),
+      parsed.experience.map((entry) => `${entry.title} ${entry.company}`).join(' '),
+      parsed.education.map((e) => `${e.institution} ${e.degree}`).join(' '),
+      (parsed.achievements ?? []).join(' '),
+      (parsed.projects ?? []).map((p) => `${p.name} ${p.description}`).join(' '),
+    ].join('\n'),
+  );
+  const keywordMatches = Array.from(requirementKeywords).filter((keyword) => resumeKeywords.has(keyword)).length;
+  const keywordCoverage = requirementKeywords.size ? keywordMatches / requirementKeywords.size : 0.5;
+  const skillCoverage = jdSkills.length ? matched.length / jdSkills.length : 0.6;
+  const technicalSkills = Math.round((skillCoverage * 0.75 + keywordCoverage * 0.25) * 100);
   const experienceLevel =
     parsed.experienceLevel === 'Senior' ? 92 : parsed.experienceLevel === 'Mid' ? 80 : 68;
   const domainKnowledge = Math.max(55, Math.min(95, Math.round((technicalSkills + experienceLevel) / 2)));
@@ -148,12 +412,46 @@ function scoreResume(jobRole: string, parsed: ReturnType<typeof parseResumeText>
   return { technicalSkills, experienceLevel, domainKnowledge, matchScore, matched };
 }
 
+function buildRankingSummary(
+  jobRole: string,
+  parsed: ReturnType<typeof parseResumeText>,
+  score: ReturnType<typeof scoreResume>,
+): string {
+  const jdSkills = extractSkills(jobRole).map(canonicalizeSkill);
+  const candidateSet = new Set(parsed.skills.map(canonicalizeSkill));
+  const gaps = jdSkills.filter((s) => !candidateSet.has(s));
+
+  const lines: string[] = [];
+  lines.push(
+    `Overall ${score.matchScore}% blends technical alignment (${score.technicalSkills}/100), experience fit (${score.experienceLevel}/100), and domain/keyword coverage (${score.domainKnowledge}/100).`,
+  );
+  if (score.matched.length) {
+    lines.push(
+      `Overlaps between the job description and this resume: ${score.matched.slice(0, 14).join(', ')}${score.matched.length > 14 ? '…' : ''}.`,
+    );
+  } else if (jdSkills.length) {
+    lines.push('No direct overlap between skills inferred from the job text and skills extracted from this resume.');
+  }
+  if (gaps.length && jdSkills.length) {
+    lines.push(
+      `Job-text terms not clearly reflected on the resume: ${gaps.slice(0, 10).join(', ')}${gaps.length > 10 ? '…' : ''}.`,
+    );
+  }
+  lines.push(
+    `Resume parsed as ${parsed.experienceLevel} level; ${parsed.skills.length} skill(s) extracted from the file.`,
+  );
+  return lines.join('\n\n');
+}
+
 type ParsedResumeData = ReturnType<typeof parseResumeText>;
 type ResolverContext = { token: string | null };
 
+function stripDataUrlBase64(input: string) {
+  return input.replace(/^data:[^;]+;base64,/, '');
+}
+
 async function extractPdfText(pdfBase64: string) {
-  const clean = pdfBase64.replace(/^data:application\/pdf;base64,/, '');
-  const buffer = Buffer.from(clean, 'base64');
+  const buffer = Buffer.from(stripDataUrlBase64(pdfBase64), 'base64');
   const pdfParseModule = await import('pdf-parse');
   const parser = new pdfParseModule.PDFParse({ data: buffer });
   try {
@@ -162,6 +460,20 @@ async function extractPdfText(pdfBase64: string) {
   } finally {
     await parser.destroy();
   }
+}
+
+async function extractDocxText(docxBase64: string) {
+  const buffer = Buffer.from(stripDataUrlBase64(docxBase64), 'base64');
+  const mammoth = await import('mammoth');
+  const result = await mammoth.extractRawText({ buffer });
+  return (result.value ?? '').trim();
+}
+
+function isDocxMime(mimeType: string, fileName?: string) {
+  const m = mimeType.toLowerCase();
+  if (m.includes('wordprocessingml.document') || m.includes('officedocument.wordprocessingml')) return true;
+  if (fileName?.toLowerCase().endsWith('.docx')) return true;
+  return false;
 }
 
 function hashPassword(password: string, salt: string) {
@@ -266,12 +578,16 @@ export const resolvers = {
     uploadResume: async (
       _: unknown,
       { input }: { input: { fileName: string; mimeType: string; uri: string; fileHash: string } },
+      context: ResolverContext,
     ) => {
+      const user = await getAuthedUser(context.token);
+      if (!user) throw new Error('Unauthorized');
       const incomingHash = input.fileHash.trim();
       if (!incomingHash) throw new Error('Unable to fingerprint resume file.');
-      const existing = await UploadedResumeModel.findOne({ fileHash: incomingHash }).lean();
+      const existing = await UploadedResumeModel.findOne({ userId: user._id, fileHash: incomingHash }).lean();
       if (existing) throw new Error('This resume was already scanned.');
       const saved = await UploadedResumeModel.create({
+        userId: user._id,
         fileName: input.fileName,
         mimeType: input.mimeType,
         uri: input.uri,
@@ -285,22 +601,65 @@ export const resolvers = {
     },
     parseResume: async (
       _: unknown,
-      { input }: { input: { text: string; fileName?: string; pdfBase64?: string; mimeType?: string } },
+      {
+        input,
+      }: {
+        input: {
+          resumeId?: string | null;
+          text: string;
+          fileName?: string;
+          pdfBase64?: string;
+          mimeType?: string;
+        };
+      },
+      context: ResolverContext,
     ) => {
+      const user = await getAuthedUser(context.token);
+      if (!user) throw new Error('Unauthorized');
       let source = input.text.trim();
-      const isPdf = (input.mimeType ?? '').toLowerCase() === 'application/pdf';
-      if (!source && isPdf && input.pdfBase64) {
-        source = await extractPdfText(input.pdfBase64);
+      const mime = (input.mimeType ?? '').toLowerCase();
+      const isPdf = mime === 'application/pdf';
+      const isDocx = isDocxMime(input.mimeType ?? '', input.fileName);
+      if (!source && input.pdfBase64) {
+        if (isPdf) {
+          source = await extractPdfText(input.pdfBase64);
+        } else if (isDocx) {
+          try {
+            source = await extractDocxText(input.pdfBase64);
+          } catch (e) {
+            throw new Error(e instanceof Error ? e.message : 'Failed to read DOCX file.');
+          }
+        }
       }
       const parsed = parseResumeText(source.length ? source : input.fileName ?? 'Unknown Candidate');
-      if (input.fileName) {
-        await UploadedResumeModel.findOneAndUpdate(
-          { fileName: input.fileName },
+
+      const resumeId = input.resumeId?.trim();
+      let updated = null;
+      if (resumeId && mongoose.Types.ObjectId.isValid(resumeId)) {
+        updated = await UploadedResumeModel.findOneAndUpdate(
+          { _id: resumeId, userId: user._id },
+          { $set: { parsed, rawText: source } },
+          { new: true },
+        );
+      } else if (input.fileName) {
+        updated = await UploadedResumeModel.findOneAndUpdate(
+          { fileName: input.fileName, userId: user._id },
           { $set: { parsed, rawText: source } },
           { sort: { createdAt: -1 } },
         );
       }
+
+      if (!updated && (resumeId || input.fileName)) {
+        throw new Error('Could not attach parse results to this upload. Try signing in again or re-upload the file.');
+      }
+
       return parsed;
+    },
+    parseResumeFile: async (
+      _: unknown,
+      { input }: { input: { fileBase64: string; fileName: string; mimeType: string } },
+    ) => {
+      return parseResumeViaPythonService(input);
     },
     getEmbeddings: (_: unknown, { input }: { input: { payload: string } }) => {
       const tokens = input.payload
@@ -317,11 +676,16 @@ export const resolvers = {
           .join('|'),
       });
     },
-    rankCandidates: async (_: unknown, { input }: { input: { jobRole: string } }) => {
-      const resumes = await UploadedResumeModel.find().sort({ createdAt: -1 }).limit(50).lean();
+    rankCandidates: async (_: unknown, { input }: { input: { jobRole: string } }, context: ResolverContext) => {
+      const user = await getAuthedUser(context.token);
+      if (!user) throw new Error('Unauthorized');
+      const resumes = await UploadedResumeModel.find({ userId: user._id }).sort({ createdAt: -1 }).limit(50).lean();
       const candidates = resumes.map((resume) => {
-        const parsed = (resume.parsed as ParsedResumeData | undefined) ?? parseResumeText(resume.rawText || resume.fileName);
-        const score = scoreResume(input.jobRole, parsed);
+        const raw = typeof resume.rawText === 'string' ? resume.rawText : '';
+        const parsed =
+          (resume.parsed as ParsedResumeData | undefined) ??
+          parseResumeText(raw.length ? raw : resume.fileName);
+        const score = scoreResume(input.jobRole, parsed, raw);
         const name = `${parsed.personalInfo.firstName} ${parsed.personalInfo.lastName}`.trim();
         return {
           id: String(resume._id),
@@ -332,7 +696,7 @@ export const resolvers = {
           experienceLevel: parsed.experienceLevel,
           matchScore: score.matchScore,
           initials: `${parsed.personalInfo.firstName[0] ?? ''}${parsed.personalInfo.lastName[0] ?? ''}`.toUpperCase(),
-          summary: `Matched ${score.matched.length} relevant skills for this role.`,
+          summary: buildRankingSummary(input.jobRole, parsed, score),
           breakdown: {
             technicalSkills: score.technicalSkills,
             experienceLevel: score.experienceLevel,

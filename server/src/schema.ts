@@ -22,6 +22,12 @@ export const typeDefs = `#graphql
     duration: String
   }
 
+  type ProjectEntry {
+    name: String!
+    description: String!
+    url: String
+  }
+
   type ParseMeta {
     confidenceScore: Float
     processingTimeMs: Int
@@ -34,7 +40,17 @@ export const typeDefs = `#graphql
     experienceLevel: String!
     education: [EducationEntry!]!
     experience: [ExperienceEntry!]!
+    achievements: [String!]!
+    projects: [ProjectEntry!]!
     meta: ParseMeta
+  }
+
+  type ResumeParseResult {
+    name: String!
+    email: String!
+    skills: [String!]!
+    experience: String!
+    education: String!
   }
 
   type UploadResult {
@@ -124,10 +140,17 @@ export const typeDefs = `#graphql
   }
 
   input ParseResumeInput {
+    resumeId: ID
     text: String!
     fileName: String
     pdfBase64: String
     mimeType: String
+  }
+
+  input ParseResumeFileInput {
+    fileBase64: String!
+    fileName: String!
+    mimeType: String!
   }
 
   input EmbeddingsInput {
@@ -185,6 +208,7 @@ export const typeDefs = `#graphql
   type Mutation {
     uploadResume(input: UploadResumeInput!): UploadResult!
     parseResume(input: ParseResumeInput!): ParsedResume!
+    parseResumeFile(input: ParseResumeFileInput!): ResumeParseResult!
     getEmbeddings(input: EmbeddingsInput!): String!
     rankCandidates(input: RankCandidatesInput!): [RankedCandidate!]!
     register(input: RegisterInput!): AuthPayload!

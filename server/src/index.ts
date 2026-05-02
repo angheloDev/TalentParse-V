@@ -4,6 +4,7 @@ import cors from 'cors';
 import express from 'express';
 import mongoose from 'mongoose';
 
+import { ensureUserProfileIndexes } from './models.js';
 import { resolvers } from './resolvers.js';
 import { typeDefs } from './schema.js';
 
@@ -12,14 +13,14 @@ const port = Number(process.env.PORT ?? 4000);
 const mongoUri = process.env.MONGODB_URI;
 
 if (mongoUri) {
-	mongoose
-		.connect(mongoUri)
-		.then(() => {
-			console.log('[database]: connected successfully');
-		})
-		.catch(() => {
-			console.warn('[database]: connection failed');
-		});
+	try {
+		await mongoose.connect(mongoUri);
+		console.log('[database]: connected successfully');
+		await ensureUserProfileIndexes();
+		console.log('[database]: user profile indexes OK');
+	} catch (e) {
+		console.warn('[database]: connection or index setup failed', e);
+	}
 } else {
 	console.warn('[database]: MONGODB_URI is missing');
 }
