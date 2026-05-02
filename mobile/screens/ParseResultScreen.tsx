@@ -18,6 +18,24 @@ export function ParseResultScreen() {
   const latest = useAppStore((s) => s.latestParsed);
   const lastFileName = useAppStore((s) => s.lastFileName);
   const parseProgress = useAppStore((s) => s.parseProgress);
+  const rankings = useAppStore((s) => s.rankings);
+  const latestUploadJobContext = useAppStore((s) => s.latestUploadJobContext);
+
+  const rankedUploadedResume = latestUploadJobContext
+    ? rankings.find((candidate) => candidate.id === latestUploadJobContext.uploadedResumeId)
+    : undefined;
+  const matchedSkills =
+    latestUploadJobContext && latest
+      ? latestUploadJobContext.requiredSkills.filter((skill) =>
+          latest.skills.some((candidateSkill) => candidateSkill.toLowerCase() === skill.toLowerCase()),
+        )
+      : [];
+  const missingSkills =
+    latestUploadJobContext && latest
+      ? latestUploadJobContext.requiredSkills.filter(
+          (skill) => !latest.skills.some((candidateSkill) => candidateSkill.toLowerCase() === skill.toLowerCase()),
+        )
+      : [];
 
   const json = latest
     ? JSON.stringify(
@@ -35,6 +53,8 @@ export function ParseResultScreen() {
             experience_level: latest.experienceLevel,
             experience: latest.experience,
             education: latest.education,
+            achievements: latest.achievements ?? [],
+            projects: latest.projects ?? [],
           },
           meta: latest.meta,
         },
@@ -100,6 +120,51 @@ export function ParseResultScreen() {
         </View>
         {tab === 'visual' ? (
           <View className="gap-4 p-4">
+            {latestUploadJobContext ? (
+              <Card className="p-4">
+                <Text className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Requirement Compliance
+                </Text>
+                <Text className="text-sm text-slate-700 dark:text-slate-300">
+                  Job: {latestUploadJobContext.industry} - {latestUploadJobContext.jobRole}
+                </Text>
+                {rankedUploadedResume ? (
+                  <Text className="mt-1 text-sm font-semibold text-primary dark:text-primary-dark">
+                    Ranking score: {Math.round(rankedUploadedResume.matchScore)}%
+                  </Text>
+                ) : null}
+                <Text className="mt-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Matched skills</Text>
+                {matchedSkills.length ? (
+                  <View className="mt-2 flex-row flex-wrap gap-2">
+                    {matchedSkills.map((skill) => (
+                      <View
+                        key={skill}
+                        className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 dark:border-emerald-900 dark:bg-emerald-950/40"
+                      >
+                        <Text className="text-xs text-emerald-700 dark:text-emerald-300">{skill}</Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : (
+                  <Text className="mt-1 text-sm text-slate-600 dark:text-slate-400">No required skills matched yet.</Text>
+                )}
+                <Text className="mt-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Missing skills</Text>
+                {missingSkills.length ? (
+                  <View className="mt-2 flex-row flex-wrap gap-2">
+                    {missingSkills.map((skill) => (
+                      <View
+                        key={skill}
+                        className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 dark:border-rose-900 dark:bg-rose-950/40"
+                      >
+                        <Text className="text-xs text-rose-700 dark:text-rose-300">{skill}</Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : (
+                  <Text className="mt-1 text-sm text-emerald-700 dark:text-emerald-300">All required skills matched.</Text>
+                )}
+              </Card>
+            ) : null}
             <Section title="Skills" pills={latest.skills} />
             <Section title="Tech stack" pills={latest.techStack} />
             <Card className="p-4">
@@ -115,6 +180,43 @@ export function ParseResultScreen() {
                   {e.year != null ? <Text className="text-xs text-slate-500">{e.year}</Text> : null}
                 </View>
               ))}
+            </Card>
+            <Card className="p-4">
+              <Text className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Projects</Text>
+              {(latest.projects ?? []).length ? (
+                (latest.projects ?? []).map((p, i) => (
+                  <View key={`${p.name}-${i}`} className="mb-4 border-b border-slate-100 pb-4 last:mb-0 last:border-0 dark:border-slate-800">
+                    <Text className="font-semibold text-slate-900 dark:text-slate-100">{p.name}</Text>
+                    {p.description ? (
+                      <Text className="mt-1 text-sm leading-5 text-slate-600 dark:text-slate-400">{p.description}</Text>
+                    ) : null}
+                    {p.url ? (
+                      <Text className="mt-1 text-xs text-primary dark:text-primary-dark" selectable>
+                        {p.url}
+                      </Text>
+                    ) : null}
+                  </View>
+                ))
+              ) : (
+                <Text className="text-sm text-slate-500 dark:text-slate-400">No project section detected.</Text>
+              )}
+            </Card>
+            <Card className="p-4">
+              <Text className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                Achievements & certifications
+              </Text>
+              {(latest.achievements ?? []).length ? (
+                <View className="gap-2">
+                  {(latest.achievements ?? []).map((line, i) => (
+                    <View key={i} className="flex-row gap-2">
+                      <Text className="text-slate-400">•</Text>
+                      <Text className="flex-1 text-sm leading-5 text-slate-700 dark:text-slate-300">{line}</Text>
+                    </View>
+                  ))}
+                </View>
+              ) : (
+                <Text className="text-sm text-slate-500 dark:text-slate-400">No achievements section detected.</Text>
+              )}
             </Card>
           </View>
         ) : (

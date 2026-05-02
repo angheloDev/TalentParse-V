@@ -28,11 +28,34 @@ export function CandidateDetailScreen() {
 
   const listed = shortlistedIds.includes(c.id);
   const score = Math.round(c.matchScore);
-  const analysis = c.skillAnalysis ?? [
-    { name: c.skills[0] ?? 'Skills', level: c.experienceLevel, percent: Math.min(100, score) },
-  ];
+  const analysis = c.breakdown
+    ? [
+        {
+          name: 'Technical alignment',
+          level: c.experienceLevel,
+          percent: Math.min(100, Math.round(c.breakdown.technicalSkills)),
+        },
+        {
+          name: 'Experience fit',
+          level: c.experienceLevel,
+          percent: Math.min(100, Math.round(c.breakdown.experienceLevel)),
+        },
+        {
+          name: 'Domain / keywords',
+          level: c.experienceLevel,
+          percent: Math.min(100, Math.round(c.breakdown.domainKnowledge)),
+        },
+      ]
+    : c.skillAnalysis?.length
+      ? c.skillAnalysis
+      : [{ name: c.skills[0] ?? 'Skills', level: c.experienceLevel, percent: Math.min(100, score) }];
   const keywords = c.keywords ?? c.skills.slice(0, 8);
   const xp = c.experienceSummary ?? [];
+  const summaryText =
+    c.summary?.trim() ??
+    (c.breakdown
+      ? `${score}% blends technical (${Math.round(c.breakdown.technicalSkills)}), experience (${Math.round(c.breakdown.experienceLevel)}), and domain (${Math.round(c.breakdown.domainKnowledge)}) scores vs the job text and your résumé.`
+      : `Experience level: ${c.experienceLevel}. Parsed skills include ${c.skills.slice(0, 10).join(', ') || '—'}.`);
 
   return (
     <View className="flex-1 bg-background-light dark:bg-background-dark">
@@ -81,10 +104,7 @@ export function CandidateDetailScreen() {
             <MaterialIcons name="psychology" size={20} color="#259df4" />
             <Text className="text-lg font-bold text-slate-900 dark:text-slate-100">AI Parse Summary</Text>
           </View>
-          <Text className="text-sm leading-relaxed text-slate-700 dark:text-slate-300">
-            {c.summary ??
-              `Strong match on required stack. Experience level: ${c.experienceLevel}. Key skills include ${c.skills.slice(0, 4).join(', ')}.`}
-          </Text>
+          <Text className="text-sm leading-relaxed text-slate-700 dark:text-slate-300">{summaryText}</Text>
         </View>
         <View className="mt-2 border-b border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950">
           <View className="mb-4 flex-row items-center justify-between">
@@ -94,13 +114,6 @@ export function CandidateDetailScreen() {
               <Text className="text-sm font-semibold text-green-700 dark:text-green-400">{score}% Match</Text>
             </View>
           </View>
-          {c.breakdown ? (
-            <View className="mb-4 gap-2">
-              <BreakRow label="Technical skills" value={c.breakdown.technicalSkills} />
-              <BreakRow label="Experience level" value={c.breakdown.experienceLevel} />
-              <BreakRow label="Domain knowledge" value={c.breakdown.domainKnowledge} />
-            </View>
-          ) : null}
           <View className="gap-4">
             {analysis.map((row) => (
               <View key={row.name}>
@@ -159,11 +172,3 @@ export function CandidateDetailScreen() {
   );
 }
 
-function BreakRow(props: { label: string; value: number }) {
-  return (
-    <View className="flex-row items-center justify-between">
-      <Text className="text-sm text-slate-600 dark:text-slate-400">{props.label}</Text>
-      <Text className="text-sm font-semibold text-slate-900 dark:text-slate-100">{props.value}%</Text>
-    </View>
-  );
-}

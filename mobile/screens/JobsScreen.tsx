@@ -6,7 +6,7 @@ import { KeyboardAvoidingView, Pressable, ScrollView, Text, TextInput, View } fr
 
 import { AppHeader } from '@/components/AppHeader';
 import { Button } from '@/components/ui/Button';
-import { getSavedJobs, rankCandidates, saveJobAnalysis } from '@/services/resumeApi';
+import { getSavedJobs, rankCandidates, saveJobAnalysis, saveJobRankings } from '@/services/resumeApi';
 import { useAppStore } from '@/store/useAppStore';
 import { useToastStore } from '@/store/useToastStore';
 import type { SavedJobAnalysis } from '@/types';
@@ -126,7 +126,20 @@ export function JobsScreen() {
         otherRequirements: otherRequirements.trim(),
         rankedCandidateCount: ranked.length,
       });
-      setSavedJobs((jobs) => [saved, ...jobs]);
+      const withRanks = await saveJobRankings({
+        jobId: saved.id,
+        rankings: ranked.map((candidate) => ({
+          id: candidate.id,
+          name: candidate.name,
+          title: candidate.title ?? null,
+          location: candidate.location ?? null,
+          skills: candidate.skills,
+          experienceLevel: candidate.experienceLevel,
+          matchScore: candidate.matchScore,
+          summary: candidate.summary ?? null,
+        })),
+      });
+      setSavedJobs((jobs) => [withRanks, ...jobs]);
       useToastStore.getState().show({
         title: 'Job role analysis saved',
         message: `Saved ${ranked.length} ranked candidate${ranked.length === 1 ? '' : 's'}.`,

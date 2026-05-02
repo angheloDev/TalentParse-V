@@ -2,10 +2,11 @@ import mongoose, { Schema, type InferSchemaType } from 'mongoose';
 
 const UploadedResumeSchema = new Schema(
   {
+    userId: { type: Schema.Types.ObjectId, required: true, index: true, ref: 'UserProfile' },
     fileName: { type: String, required: true, trim: true },
     mimeType: { type: String, required: true, trim: true },
     uri: { type: String, required: true, trim: true },
-    fileHash: { type: String, required: true, trim: true, index: true, unique: true },
+    fileHash: { type: String, required: true, trim: true },
     rawText: { type: String, default: '' },
     parsed: {
       personalInfo: {
@@ -35,6 +36,14 @@ const UploadedResumeSchema = new Schema(
           duration: { type: String, default: null },
         },
       ],
+      achievements: [{ type: String }],
+      projects: [
+        {
+          name: { type: String, required: true },
+          description: { type: String, default: '' },
+          url: { type: String, default: null },
+        },
+      ],
       meta: {
         confidenceScore: { type: Number, default: 0.8 },
         processingTimeMs: { type: Number, default: 0 },
@@ -44,6 +53,8 @@ const UploadedResumeSchema = new Schema(
   { timestamps: true },
 );
 
+UploadedResumeSchema.index({ userId: 1, fileHash: 1 }, { unique: true });
+
 const UserProfileSchema = new Schema(
   {
     email: { type: String, required: true, unique: true, index: true, trim: true, lowercase: true },
@@ -52,8 +63,19 @@ const UserProfileSchema = new Schema(
     passwordHash: { type: String, required: true },
     sessionToken: { type: String, default: null },
     sessionExpiresAt: { type: Date, default: null },
+    /** Clerk user id when using Clerk SSO; omit for email/password-only users. Never store null—Mongo unique indexes duplicate on null. */
+    clerkUserId: { type: String },
   },
   { timestamps: true },
+);
+
+// Replace legacy unique(clerkUserId) that duplicated on null: only index non-empty strings.
+UserProfileSchema.index(
+  { clerkUserId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { clerkUserId: { $gt: '' } },
+  },
 );
 
 const SavedJobAnalysisSchema = new Schema(
@@ -97,3 +119,21 @@ export const UserProfileModel =
 export const SavedJobAnalysisModel =
   mongoose.models.SavedJobAnalysis ||
   mongoose.model<SavedJobAnalysisDocument>('SavedJobAnalysis', SavedJobAnalysisSchema);
+
+/**
+ * Drops the old Mongo unique index on clerkUserId that treats many nulls as duplicates (E11000),
+ * removes stored nulls, then syncs schema indexes (partial unique on non-empty clerkUserId).
+ */
+export async function ensureUserProfileIndexes() {
+  const coll = mongoose.connection.collection('userprofiles');
+  try {
+    await coll.dropIndex('clerkUserId_1');
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!/not found|ns not found/i.test(msg)) {
+      console.warn('[database]: drop clerkUserId_1:', msg);
+    }
+  }
+  await UserProfileModel.updateMany({ clerkUserId: null }, { $unset: { clerkUserId: '' } });
+  await UserProfileModel.syncIndexes();
+}

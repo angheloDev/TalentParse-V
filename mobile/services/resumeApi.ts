@@ -3,6 +3,7 @@ import {
   DELETE_SAVED_JOB,
   GET_EMBEDDINGS,
   PARSE_RESUME,
+  PARSE_RESUME_FILE,
   RANK_CANDIDATES,
   SAVED_JOB,
   SAVED_JOBS,
@@ -44,12 +45,19 @@ export async function uploadResume(file: UploadFileInput) {
   }
 }
 
-export async function parseResume(text: string, fileNameHint?: string, pdfBase64?: string, mimeType?: string) {
+export async function parseResume(
+  text: string,
+  fileNameHint?: string,
+  pdfBase64?: string,
+  mimeType?: string,
+  resumeId?: string,
+) {
   try {
     const { data } = await apolloClient.mutate<{ parseResume: ParsedResume }>({
       mutation: PARSE_RESUME,
       variables: {
         input: {
+          ...(resumeId ? { resumeId } : {}),
           text,
           fileName: fileNameHint,
           pdfBase64,
@@ -59,6 +67,33 @@ export async function parseResume(text: string, fileNameHint?: string, pdfBase64
     });
     if (!data?.parseResume) throw new Error('Parsing failed');
     return data.parseResume;
+  } catch (error) {
+    throw normalizeError(error);
+  }
+}
+
+export type ParsedResumeFileResult = {
+  name: string;
+  email: string;
+  skills: string[];
+  experience: string;
+  education: string;
+};
+
+export async function parseResumeFile(fileBase64: string, fileName: string, mimeType: string) {
+  try {
+    const { data } = await apolloClient.mutate<{ parseResumeFile: ParsedResumeFileResult }>({
+      mutation: PARSE_RESUME_FILE,
+      variables: {
+        input: {
+          fileBase64,
+          fileName,
+          mimeType,
+        },
+      },
+    });
+    if (!data?.parseResumeFile) throw new Error('Failed to parse PDF resume');
+    return data.parseResumeFile;
   } catch (error) {
     throw normalizeError(error);
   }

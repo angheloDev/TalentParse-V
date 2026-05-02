@@ -35,10 +35,28 @@ export const PARSE_RESUME = gql`
         endDate
         current
       }
+      achievements
+      projects {
+        name
+        description
+        url
+      }
       meta {
         confidenceScore
         processingTimeMs
       }
+    }
+  }
+`;
+
+export const PARSE_RESUME_FILE = gql`
+  mutation ParseResumeFile($input: ParseResumeFileInput!) {
+    parseResumeFile(input: $input) {
+      name
+      email
+      skills
+      experience
+      education
     }
   }
 `;

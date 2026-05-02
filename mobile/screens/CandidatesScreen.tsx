@@ -5,6 +5,7 @@ import { FlatList, Pressable, ScrollView, Text, View } from 'react-native';
 
 import { AppHeader } from '@/components/AppHeader';
 import { CandidateRow } from '@/components/CandidateRow';
+import { Card } from '@/components/ui/Card';
 import {
   FILTER_ANY,
   FILTER_SENIOR_PLUS,
@@ -13,6 +14,7 @@ import {
   filterRankedCandidates,
 } from '@/utils/candidateFilters';
 import { useAppStore } from '@/store/useAppStore';
+import { averageMatchScore } from '@/utils/insights';
 
 export function CandidatesScreen() {
   const router = useRouter();
@@ -22,14 +24,26 @@ export function CandidatesScreen() {
   const shortlistedIds = useAppStore((s) => s.shortlistedIds);
   const filters = useAppStore((s) => s.filters);
   const setFilters = useAppStore((s) => s.setFilters);
+  const latestCtx = useAppStore((s) => s.latestUploadJobContext);
 
   const opts = useMemo(() => buildCandidateFilterOptions(rankings), [rankings]);
   const shortSet = useMemo(() => new Set(shortlistedIds), [shortlistedIds]);
 
   const filtered = useMemo(
     () => filterRankedCandidates(rankings, candidateTab, shortSet, filters),
-    [rankings, candidateTab, shortSet, filters]
+    [rankings, candidateTab, shortSet, filters],
   );
+
+  const poolAvg = useMemo(() => averageMatchScore(rankings), [rankings]);
+  const filteredAvg = useMemo(() => averageMatchScore(filtered), [filtered]);
+  const topPoolScore = useMemo(() => {
+    if (!rankings.length) return 0;
+    return Math.round(Math.max(...rankings.map((r) => r.matchScore)));
+  }, [rankings]);
+  const lowPoolScore = useMemo(() => {
+    if (!rankings.length) return 0;
+    return Math.round(Math.min(...rankings.map((r) => r.matchScore)));
+  }, [rankings]);
 
   function cycleList(full: string[], key: 'role' | 'experience' | 'skill' | 'location') {
     const cur = filters[key];
@@ -41,6 +55,34 @@ export function CandidatesScreen() {
   return (
     <View className="flex-1 bg-background-light pb-24 dark:bg-background-dark">
       <AppHeader showBack title="Candidate Rankings" centerTitle />
+      <View className="px-4 pt-3">
+        <Card className="gap-3 p-4">
+          <Text className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+            Pool insights
+          </Text>
+          {latestCtx ? (
+            <Text className="text-sm font-medium text-slate-800 dark:text-slate-200">
+              Last ranked vs: {latestCtx.industry} — {latestCtx.jobRole}
+            </Text>
+          ) : (
+            <Text className="text-sm text-slate-600 dark:text-slate-400">
+              Rankings reflect your last job-analysis or upload-and-rank run (in-memory until you run again).
+            </Text>
+          )}
+          <View className="flex-row flex-wrap gap-x-4 gap-y-3">
+            <InsightStat label="In pool" value={rankings.length ? String(rankings.length) : '0'} hint="Total ranked rows" />
+            <InsightStat label="Visible" value={String(filtered.length)} hint="After tab & filters" />
+            <InsightStat
+              label="Avg match"
+              value={filtered.length ? `${filteredAvg}%` : rankings.length ? `${poolAvg}%` : '—'}
+              hint={filtered.length ? 'Filtered list' : 'Full pool'}
+            />
+            <InsightStat label="Top score" value={rankings.length ? `${topPoolScore}%` : '—'} hint="Best in pool" />
+            <InsightStat label="Low score" value={rankings.length ? `${lowPoolScore}%` : '—'} hint="Lowest in pool" />
+            <InsightStat label="Shortlisted" value={String(shortlistedIds.length)} hint="Bookmarked" />
+          </View>
+        </Card>
+      </View>
       <View className="px-4 pt-2">
         <View className="flex-row justify-between border-b border-slate-200 dark:border-slate-800">
           {(['all', 'top', 'shortlist'] as CandidateTab[]).map((t) => {
@@ -109,6 +151,18 @@ export function CandidatesScreen() {
           <CandidateRow candidate={item} onPress={() => router.push(`/candidate/${item.id}`)} />
         )}
       />
+    </View>
+  );
+}
+
+function InsightStat(props: { label: string; value: string; hint: string }) {
+  return (
+    <View className="min-w-[44%] flex-1">
+      <Text className="text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
+        {props.label}
+      </Text>
+      <Text className="text-xl font-bold text-slate-900 dark:text-slate-100">{props.value}</Text>
+      <Text className="text-[11px] text-slate-500 dark:text-slate-500">{props.hint}</Text>
     </View>
   );
 }

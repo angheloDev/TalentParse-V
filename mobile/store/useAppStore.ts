@@ -2,25 +2,13 @@ import { create } from 'zustand';
 
 import type { CandidateTab } from '@/utils/candidateFilters';
 import { FILTER_ANY } from '@/utils/candidateFilters';
-import type { ParsedResume, RankedCandidate, UploadedResume } from '@/types';
+import type { LatestUploadJobContext, ParsedResume, RankedCandidate, SavedJobAnalysis, UploadedResume } from '@/types';
 
 export type CandidateFiltersState = {
   role: string;
   experience: string;
   skill: string;
   location: string;
-};
-
-export type SavedJobAnalysis = {
-  id: string;
-  industry: string;
-  jobRole: string;
-  requiredSkills: string[];
-  yearsOfExperience: string;
-  strengths: string;
-  otherRequirements: string;
-  rankedCandidateCount: number;
-  createdAt: string;
 };
 
 type AppState = {
@@ -31,6 +19,7 @@ type AppState = {
   parseProgress: number;
   jobRole: string;
   savedJobs: SavedJobAnalysis[];
+  latestUploadJobContext: LatestUploadJobContext | null;
   rankings: RankedCandidate[];
   embeddingsReady: boolean;
   candidateTab: CandidateTab;
@@ -42,6 +31,7 @@ type AppState = {
   setLastFileName: (n: string | null) => void;
   addUploadedResume: (r: UploadedResume) => void;
   addSavedJob: (job: SavedJobAnalysis) => void;
+  setLatestUploadJobContext: (ctx: LatestUploadJobContext | null) => void;
   setJobRole: (t: string) => void;
   setRankings: (r: RankedCandidate[]) => void;
   setEmbeddingsReady: (v: boolean) => void;
@@ -66,6 +56,7 @@ export const useAppStore = create<AppState>((set) => ({
   parseProgress: 0,
   jobRole: '',
   savedJobs: [],
+  latestUploadJobContext: null,
   rankings: [],
   embeddingsReady: false,
   candidateTab: 'top',
@@ -88,6 +79,7 @@ export const useAppStore = create<AppState>((set) => ({
     set((s) => ({
       savedJobs: [job, ...s.savedJobs].slice(0, 100),
     })),
+  setLatestUploadJobContext: (latestUploadJobContext) => set({ latestUploadJobContext }),
   setJobRole: (jobRole) => set({ jobRole }),
   setRankings: (rankings) =>
     set((s) => {
@@ -115,6 +107,7 @@ export const useAppStore = create<AppState>((set) => ({
       parseProgress: 0,
       jobRole: '',
       savedJobs: [],
+      latestUploadJobContext: null,
       rankings: [],
       embeddingsReady: false,
       shortlistedIds: [],

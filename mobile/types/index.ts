@@ -21,6 +21,12 @@ export type ExperienceEntry = {
   duration?: string;
 };
 
+export type ProjectEntry = {
+  name: string;
+  description: string;
+  url?: string | null;
+};
+
 export type ParsedResume = {
   personalInfo: PersonalInfo;
   skills: string[];
@@ -28,6 +34,8 @@ export type ParsedResume = {
   experienceLevel: string;
   education: EducationEntry[];
   experience: ExperienceEntry[];
+  achievements: string[];
+  projects: ProjectEntry[];
   meta?: { confidenceScore?: number; processingTimeMs?: number };
 };
 
@@ -85,4 +93,15 @@ export type SavedRankedResume = {
   matchScore: number;
   summary?: string | null;
   rankedAt: string;
+};
+
+export type LatestUploadJobContext = {
+  jobId: string;
+  industry: string;
+  jobRole: string;
+  requiredSkills: string[];
+  yearsOfExperience: string;
+  strengths: string;
+  otherRequirements: string;
+  uploadedResumeId: string;
 };
