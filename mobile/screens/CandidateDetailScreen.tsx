@@ -45,6 +45,16 @@ export function CandidateDetailScreen() {
           level: c.experienceLevel,
           percent: Math.min(100, Math.round(c.breakdown.domainKnowledge)),
         },
+        {
+          name: 'Education',
+          level: c.experienceLevel,
+          percent: Math.min(100, Math.round(c.breakdown.educationScore)),
+        },
+        {
+          name: 'Certifications',
+          level: c.experienceLevel,
+          percent: Math.min(100, Math.round(c.breakdown.certificationScore)),
+        },
       ]
     : c.skillAnalysis?.length
       ? c.skillAnalysis
@@ -82,6 +92,18 @@ export function CandidateDetailScreen() {
             <View className="min-w-0 flex-1 justify-center pt-2">
               <Text className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">{c.name}</Text>
               <Text className="text-base text-slate-600 dark:text-slate-300">{c.title ?? 'Candidate'}</Text>
+              <View className="mt-1 flex-row items-center gap-2 flex-wrap">
+                <View className="rounded-full bg-primary/10 px-2.5 py-0.5 dark:bg-primary-dark/20">
+                  <Text className="text-xs font-semibold text-primary dark:text-primary-dark">{c.experienceLevel}</Text>
+                </View>
+                {c.totalYearsExperience != null ? (
+                  <View className="rounded-full bg-slate-100 px-2.5 py-0.5 dark:bg-slate-800">
+                    <Text className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                      {c.totalYearsExperience} yr{c.totalYearsExperience !== 1 ? 's' : ''} exp
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
               {c.location ? (
                 <View className="mt-1 flex-row items-center gap-1">
                   <MaterialIcons name="place" size={16} color="#94a3b8" />
@@ -89,6 +111,39 @@ export function CandidateDetailScreen() {
                 </View>
               ) : null}
             </View>
+          </View>
+          {/* Contact information — always shown when available */}
+          <View className="mb-4 gap-1.5">
+            {c.email ? (
+              <View className="flex-row items-center gap-2">
+                <MaterialIcons name="email" size={15} color="#94a3b8" />
+                <Text className="text-sm text-slate-600 dark:text-slate-300" selectable>{c.email}</Text>
+              </View>
+            ) : null}
+            {c.phone ? (
+              <View className="flex-row items-center gap-2">
+                <MaterialIcons name="phone" size={15} color="#94a3b8" />
+                <Text className="text-sm text-slate-600 dark:text-slate-300" selectable>{c.phone}</Text>
+              </View>
+            ) : null}
+            {c.linkedin ? (
+              <View className="flex-row items-center gap-2">
+                <MaterialIcons name="link" size={15} color="#94a3b8" />
+                <Text className="text-sm text-primary dark:text-primary-dark" selectable>{c.linkedin}</Text>
+              </View>
+            ) : null}
+            {c.github ? (
+              <View className="flex-row items-center gap-2">
+                <MaterialIcons name="code" size={15} color="#94a3b8" />
+                <Text className="text-sm text-primary dark:text-primary-dark" selectable>{c.github}</Text>
+              </View>
+            ) : null}
+            {c.portfolio ? (
+              <View className="flex-row items-center gap-2">
+                <MaterialIcons name="language" size={15} color="#94a3b8" />
+                <Text className="text-sm text-primary dark:text-primary-dark" selectable>{c.portfolio}</Text>
+              </View>
+            ) : null}
           </View>
           <View className="flex-row gap-3">
             <Pressable className="h-10 flex-1 items-center justify-center rounded-lg bg-primary/10 dark:bg-primary-dark/15">

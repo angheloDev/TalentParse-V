@@ -11,7 +11,7 @@ import {
   SAVE_JOB_RANKINGS,
   UPLOAD_RESUME,
 } from '@/graphql/operations';
-import type { ParsedResume, RankedCandidate, SavedJobAnalysis } from '@/types';
+import type { CriteriaWeights, ParsedResume, RankedCandidate, SavedJobAnalysis } from '@/types';
 
 export type UploadFileInput = {
   uri: string;
@@ -75,24 +75,24 @@ export async function parseResume(
 export type ParsedResumeFileResult = {
   name: string;
   email: string;
+  phone: string;
+  linkedin: string;
+  github: string;
+  portfolio: string;
   skills: string[];
   experience: string;
   education: string;
+  certifications: Array<{ name: string; issuer?: string | null; year?: string | null }>;
+  rawText: string;
 };
 
 export async function parseResumeFile(fileBase64: string, fileName: string, mimeType: string) {
   try {
     const { data } = await apolloClient.mutate<{ parseResumeFile: ParsedResumeFileResult }>({
       mutation: PARSE_RESUME_FILE,
-      variables: {
-        input: {
-          fileBase64,
-          fileName,
-          mimeType,
-        },
-      },
+      variables: { input: { fileBase64, fileName, mimeType } },
     });
-    if (!data?.parseResumeFile) throw new Error('Failed to parse PDF resume');
+    if (!data?.parseResumeFile) throw new Error('Failed to parse resume file');
     return data.parseResumeFile;
   } catch (error) {
     throw normalizeError(error);
@@ -103,11 +103,7 @@ export async function getEmbeddings(data: Record<string, unknown>) {
   try {
     const { data: response } = await apolloClient.mutate<{ getEmbeddings: string }>({
       mutation: GET_EMBEDDINGS,
-      variables: {
-        input: {
-          payload: JSON.stringify(data),
-        },
-      },
+      variables: { input: { payload: JSON.stringify(data) } },
     });
     if (!response?.getEmbeddings) throw new Error('Embedding generation failed');
     return response.getEmbeddings;
@@ -116,7 +112,7 @@ export async function getEmbeddings(data: Record<string, unknown>) {
   }
 }
 
-export async function rankCandidates(jobRole: string) {
+export async function rankCandidates(jobRole: string, criteriaWeights?: CriteriaWeights) {
   if (!jobRole.trim()) throw new Error('Job role is required');
   try {
     const { data } = await apolloClient.mutate<{ rankCandidates: RankedCandidate[] }>({
@@ -124,6 +120,7 @@ export async function rankCandidates(jobRole: string) {
       variables: {
         input: {
           jobRole,
+          ...(criteriaWeights ? { criteriaWeights } : {}),
         },
       },
     });
@@ -141,6 +138,7 @@ export type SaveJobAnalysisInput = {
   strengths?: string;
   otherRequirements?: string;
   rankedCandidateCount: number;
+  criteriaWeights?: CriteriaWeights;
 };
 
 export async function saveJobAnalysis(input: SaveJobAnalysisInput) {
