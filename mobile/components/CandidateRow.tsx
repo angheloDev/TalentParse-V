@@ -38,7 +38,9 @@ export function CandidateRow(props: {
             {c.name}
           </Text>
           <Text className="truncate text-sm text-slate-500 dark:text-slate-400" numberOfLines={1}>
-            {c.experienceLevel} · {c.title ?? 'Candidate'}
+            {c.experienceLevel}
+            {c.totalYearsExperience != null ? ` · ${c.totalYearsExperience} yr${c.totalYearsExperience !== 1 ? 's' : ''}` : ''}
+            {' · '}{c.title ?? 'Candidate'}
           </Text>
           <Text className="mt-1 truncate text-xs text-slate-400 dark:text-slate-500" numberOfLines={1}>
             Skills: {skillPreview(c.skills)}

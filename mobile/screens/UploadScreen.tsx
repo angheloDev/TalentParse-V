@@ -5,7 +5,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 
 import { AppHeader } from '@/components/AppHeader';
 import { ProgressBar } from '@/components/ProgressBar';
@@ -25,16 +25,17 @@ import type { ParsedResume, SavedJobAnalysis } from '@/types';
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
-/** Safe filename segment for cache paths (Android content:// must be copied before read — see expo filesystem-legacy URI table). */
+type FileStatus = {
+  name: string;
+  status: 'pending' | 'uploading' | 'parsing' | 'done' | 'skipped' | 'error';
+  error?: string;
+};
+
 function safeCacheFileSegment(name: string): string {
   const base = (name || 'file').replace(/[/\\?*:|"<>]/g, '_').replace(/\s+/g, '_');
   return base.slice(0, 96) || 'file';
 }
 
-/**
- * On Android, `content://` URIs cannot be read with `readAsStringAsync`; `copyAsync` supports them.
- * Try direct read first on `file://`, otherwise copy into cache and read from there.
- */
 async function readUriAsBase64(
   uri: string,
   displayName: string,
@@ -42,15 +43,12 @@ async function readUriAsBase64(
   const cacheDir = FileSystem.cacheDirectory;
   const tryRead = async (u: string) => {
     try {
-      const s = await FileSystem.readAsStringAsync(u, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      const s = await FileSystem.readAsStringAsync(u, { encoding: FileSystem.EncodingType.Base64 });
       return s && s.length > 0 ? s : undefined;
     } catch {
       return undefined;
     }
   };
-
   const copyThenRead = async (): Promise<{ base64: string; localFileUri: string } | undefined> => {
     if (!cacheDir) return undefined;
     const dest = `${cacheDir}tp-resume-${Date.now()}-${safeCacheFileSegment(displayName)}`;
@@ -63,113 +61,88 @@ async function readUriAsBase64(
       return undefined;
     }
   };
-
-  if (Platform.OS === 'android' && uri.startsWith('content://')) {
-    return copyThenRead();
-  }
-
+  if (Platform.OS === 'android' && uri.startsWith('content://')) return copyThenRead();
   const direct = await tryRead(uri);
   if (direct) return { base64: direct };
-
   return copyThenRead();
 }
 
 async function readUriAsUtf8Text(uri: string, displayName: string): Promise<{ text: string; localFileUri?: string }> {
   const cacheDir = FileSystem.cacheDirectory;
   const tryRead = async (u: string) => {
-    try {
-      return await FileSystem.readAsStringAsync(u);
-    } catch {
-      return '';
-    }
+    try { return await FileSystem.readAsStringAsync(u); } catch { return ''; }
   };
-
   const copyThenRead = async (): Promise<{ text: string; localFileUri: string } | undefined> => {
     if (!cacheDir) return undefined;
     const dest = `${cacheDir}tp-txt-${Date.now()}-${safeCacheFileSegment(displayName)}`;
     try {
       await FileSystem.copyAsync({ from: uri, to: dest });
-      const t = await tryRead(dest);
-      return { text: t, localFileUri: dest };
-    } catch {
-      return undefined;
-    }
+      return { text: await tryRead(dest), localFileUri: dest };
+    } catch { return undefined; }
   };
-
   if (Platform.OS === 'android' && uri.startsWith('content://')) {
-    const copied = await copyThenRead();
-    if (copied) return copied;
-    return { text: '' };
+    return (await copyThenRead()) ?? { text: '' };
   }
-
   const direct = await tryRead(uri);
   if (direct.trim()) return { text: direct };
-
-  const fallback = await copyThenRead();
-  if (fallback) return fallback;
-
-  return { text: '' };
+  return (await copyThenRead()) ?? { text: '' };
 }
 
-/**
- * Infer resume type from filename and MIME. Extension wins; MIME covers Android providers that omit extensions.
- * OS often sends application/octet-stream — then we rely on .pdf / .docx / .txt in the name.
- */
 function inferResumeKind(fileName: string, mime: string): 'pdf' | 'docx' | 'txt' | 'unknown' {
   const name = (fileName || '').toLowerCase();
   const m = (mime || '').toLowerCase();
-
   if (name.endsWith('.pdf')) return 'pdf';
   if (name.endsWith('.docx')) return 'docx';
   if (name.endsWith('.txt')) return 'txt';
-
   if (m === 'application/pdf' || m === 'application/x-pdf') return 'pdf';
   if (
     m.includes('wordprocessingml.document') ||
     m.includes('officedocument.wordprocessingml.document') ||
     m === 'application/msword' ||
     m === 'application/vnd.ms-word.document.macroenabled.12'
-  ) {
-    return 'docx';
-  }
+  ) return 'docx';
   if (m === 'text/plain' || m.startsWith('text/')) return 'txt';
   if (m.includes('pdf')) return 'pdf';
   if (m.includes('wordprocessingml') || m.includes('officedocument.wordprocessingml')) return 'docx';
-
   return 'unknown';
 }
+
+const STATUS_ICON: Record<FileStatus['status'], { name: React.ComponentProps<typeof MaterialIcons>['name']; color: string }> = {
+  pending:   { name: 'radio-button-unchecked', color: '#94a3b8' },
+  uploading: { name: 'cloud-upload',           color: '#259df4' },
+  parsing:   { name: 'psychology',             color: '#a855f7' },
+  done:      { name: 'check-circle',           color: '#16a34a' },
+  skipped:   { name: 'skip-next',              color: '#d97706' },
+  error:     { name: 'error',                  color: '#dc2626' },
+};
 
 export function UploadScreen() {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
-  const [isParsing, setIsParsing] = useState(false);
+  const [isRanking, setIsRanking] = useState(false);
   const [savedJobs, setSavedJobs] = useState<SavedJobAnalysis[]>([]);
   const [selectedJobId, setSelectedJobId] = useState('');
+  const [fileStatuses, setFileStatuses] = useState<FileStatus[]>([]);
+  const [currentFileIndex, setCurrentFileIndex] = useState(-1);
+
   const uploadProgress = useAppStore((s) => s.uploadProgress);
-  const parseProgress = useAppStore((s) => s.parseProgress);
-  const lastFileName = useAppStore((s) => s.lastFileName);
+  const parseProgress  = useAppStore((s) => s.parseProgress);
   const setUploadProgress = useAppStore((s) => s.setUploadProgress);
-  const setParseProgress = useAppStore((s) => s.setParseProgress);
-  const setLastFileName = useAppStore((s) => s.setLastFileName);
-  const setLatestParsed = useAppStore((s) => s.setLatestParsed);
+  const setParseProgress  = useAppStore((s) => s.setParseProgress);
+  const setLastFileName   = useAppStore((s) => s.setLastFileName);
+  const setLatestParsed   = useAppStore((s) => s.setLatestParsed);
   const addUploadedResume = useAppStore((s) => s.addUploadedResume);
   const setEmbeddingsReady = useAppStore((s) => s.setEmbeddingsReady);
-  const setRankings = useAppStore((s) => s.setRankings);
+  const setRankings        = useAppStore((s) => s.setRankings);
   const setLatestUploadJobContext = useAppStore((s) => s.setLatestUploadJobContext);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadSavedJobs();
-    }, []),
-  );
+  useFocusEffect(useCallback(() => { loadSavedJobs(); }, []));
 
   async function loadSavedJobs() {
     try {
       const rows = await getSavedJobs();
       setSavedJobs(rows);
-      if (!rows.find((job) => job.id === selectedJobId)) {
-        setSelectedJobId(rows[0]?.id ?? '');
-      }
+      if (!rows.find((j) => j.id === selectedJobId)) setSelectedJobId(rows[0]?.id ?? '');
     } catch (e) {
       useToastStore.getState().show({
         title: 'Failed to load jobs',
@@ -190,24 +163,27 @@ export function UploadScreen() {
     ].join('\n\n');
   }
 
+  function updateStatus(index: number, patch: Partial<FileStatus>) {
+    setFileStatuses((prev) => prev.map((f, i) => (i === index ? { ...f, ...patch } : f)));
+  }
+
   async function onBrowse() {
-    const selectedJob = savedJobs.find((job) => job.id === selectedJobId);
+    const selectedJob = savedJobs.find((j) => j.id === selectedJobId);
     if (!selectedJob) {
       useToastStore.getState().show({
         title: 'Select a job first',
-        message: 'Choose an existing job before scanning a resume.',
+        message: 'Choose an existing job before scanning resumes.',
         type: 'error',
       });
       return;
     }
 
-    // Android: strict MIME filters often prevent the picker from returning a selection when tapping a file.
-    // Expo recommends '*/*' on Android; we validate PDF/DOCX/TXT after selection.
     let res: DocumentPicker.DocumentPickerResult;
     try {
       res = await DocumentPicker.getDocumentAsync({
         type: Platform.OS === 'android' ? '*/*' : ['application/pdf', 'text/plain', DOCX_MIME, 'application/octet-stream'],
         copyToCacheDirectory: true,
+        multiple: true,
       });
     } catch (e) {
       useToastStore.getState().show({
@@ -217,148 +193,214 @@ export function UploadScreen() {
       });
       return;
     }
-    if (res.canceled) return;
-    const asset = res.assets?.[0];
-    if (!asset) {
+    if (res.canceled || !res.assets?.length) return;
+
+    // Filter assets — skip unsupported formats silently
+    const validAssets = res.assets.filter((a) => inferResumeKind(a.name, a.mimeType ?? '') !== 'unknown');
+    const skippedCount = res.assets.length - validAssets.length;
+
+    if (!validAssets.length) {
       useToastStore.getState().show({
-        title: 'Could not read file',
-        message: 'No file was returned from the picker. Try again.',
-        type: 'error',
-      });
-      return;
-    }
-    const mime = asset.mimeType ?? 'application/octet-stream';
-    const kind = inferResumeKind(asset.name, mime);
-    if (kind === 'unknown') {
-      useToastStore.getState().show({
-        title: 'Unsupported file',
-        message: 'Use a .pdf, .docx, or .txt resume.',
+        title: 'Unsupported files',
+        message: 'Use .pdf, .docx, or .txt resumes.',
         type: 'error',
       });
       return;
     }
 
-    let text = '';
-    let pdfBase64: string | undefined;
-    let uploadUri = asset.uri;
-
-    if (kind === 'txt') {
-      const t = await readUriAsUtf8Text(asset.uri, asset.name);
-      text = t.text.trim();
-      if (t.localFileUri) uploadUri = t.localFileUri;
-    }
-    if (kind === 'pdf' || kind === 'docx') {
-      const bin = await readUriAsBase64(asset.uri, asset.name);
-      pdfBase64 = bin?.base64;
-      if (bin?.localFileUri) uploadUri = bin.localFileUri;
-      if (!pdfBase64) {
-        useToastStore.getState().show({
-          title: 'Could not read file',
-          message: 'Unable to load file contents from disk. Try copying the file to Downloads and pick again.',
-          type: 'error',
-        });
-        return;
-      }
+    if (skippedCount > 0) {
+      useToastStore.getState().show({
+        title: `${skippedCount} file${skippedCount > 1 ? 's' : ''} skipped`,
+        message: 'Only PDF, DOCX, and TXT files are supported.',
+        type: 'error',
+      });
     }
 
-    const normalizedText = text.trim();
-    const metadataFingerprint = `${asset.name}:${asset.size ?? 'na'}:${asset.lastModified ?? 'na'}:${mime}`;
-    const hashPayload =
-      kind === 'pdf'
-        ? pdfBase64
-          ? `pdf:${pdfBase64}`
-          : `pdf-meta:${metadataFingerprint}`
-        : kind === 'docx'
-          ? pdfBase64
-            ? `docx:${pdfBase64}`
-            : `docx-meta:${metadataFingerprint}`
-          : normalizedText
-            ? `txt:${normalizedText}`
-            : `file-meta:${metadataFingerprint}`;
-    const fileHash = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, hashPayload);
+    // Initialise per-file status list
+    setFileStatuses(validAssets.map((a) => ({ name: a.name, status: 'pending' })));
+    setCurrentFileIndex(-1);
     setBusy(true);
-    setIsParsing(false);
-    setLastFileName(asset.name);
-    setUploadProgress(0);
-    setParseProgress(0);
-    let prTimer: ReturnType<typeof setInterval> | undefined;
-    const upTimer = setInterval(() => {
-      setUploadProgress((p) => Math.min(90, p + 8));
-    }, 180);
-    try {
-      const uploadMime =
-        kind === 'pdf' ? 'application/pdf' : kind === 'docx' ? DOCX_MIME : kind === 'txt' ? 'text/plain' : mime;
-      const up = await uploadResume({ uri: uploadUri, name: asset.name, mimeType: uploadMime, fileHash });
-      clearInterval(upTimer);
-      setUploadProgress(100);
-      addUploadedResume({
-        id: up.id,
-        fileName: up.fileName,
-        mimeType: up.mimeType,
-        uri: uploadUri,
-        uploadedAt: new Date().toISOString(),
-      });
-      setIsParsing(true);
-      prTimer = setInterval(() => {
-        setParseProgress((p) => Math.min(90, p + 10));
-      }, 160);
-      let parsed: ParsedResume;
-      if (kind === 'pdf' && pdfBase64) {
-        const parsedFile = await parseResumeFile(pdfBase64, asset.name, 'application/pdf');
-        const fallbackParsed = await parseResume('', asset.name, pdfBase64, 'application/pdf', up.id);
-        const [firstName = 'Unknown', ...restName] = parsedFile.name.trim().split(/\s+/);
-        parsed = {
-          personalInfo: {
-            firstName: parsedFile.name.trim() ? firstName : fallbackParsed.personalInfo.firstName,
-            lastName: parsedFile.name.trim() ? restName.join(' ') || 'Candidate' : fallbackParsed.personalInfo.lastName,
-            email: parsedFile.email || fallbackParsed.personalInfo.email,
-            phone: fallbackParsed.personalInfo.phone,
-            location: fallbackParsed.personalInfo.location,
-          },
-          skills: parsedFile.skills.length ? parsedFile.skills : fallbackParsed.skills,
-          techStack: parsedFile.skills.length ? parsedFile.skills.slice(0, 6) : fallbackParsed.techStack,
-          experienceLevel: parsedFile.experience || fallbackParsed.experienceLevel || 'Not specified',
-          education: fallbackParsed.education,
-          experience: [
-            {
-              company: fallbackParsed.experience[0]?.company || 'Not specified',
-              title: parsedFile.experience || fallbackParsed.experience[0]?.title || 'Not specified',
+    setIsRanking(false);
+
+    let lastParsed: ParsedResume | null = null;
+    let lastUploadId = '';
+    let successCount = 0;
+
+    // -----------------------------------------------------------------------
+    // Process files one by one
+    // -----------------------------------------------------------------------
+    for (let i = 0; i < validAssets.length; i++) {
+      const asset = validAssets[i];
+      const mime = asset.mimeType ?? 'application/octet-stream';
+      const kind = inferResumeKind(asset.name, mime);
+
+      setCurrentFileIndex(i);
+      setLastFileName(asset.name);
+      setUploadProgress(0);
+      setParseProgress(0);
+      updateStatus(i, { status: 'uploading' });
+
+      let upTimer: ReturnType<typeof setInterval> | undefined;
+      let prTimer: ReturnType<typeof setInterval> | undefined;
+
+      try {
+        // --- Read file content ---
+        let text = '';
+        let pdfBase64: string | undefined;
+        let uploadUri = asset.uri;
+
+        if (kind === 'txt') {
+          const t = await readUriAsUtf8Text(asset.uri, asset.name);
+          text = t.text.trim();
+          if (t.localFileUri) uploadUri = t.localFileUri;
+        } else {
+          const bin = await readUriAsBase64(asset.uri, asset.name);
+          pdfBase64 = bin?.base64;
+          if (bin?.localFileUri) uploadUri = bin.localFileUri;
+          if (!pdfBase64) throw new Error('Unable to read file contents from disk.');
+        }
+
+        // --- Build hash for deduplication ---
+        const metaFp = `${asset.name}:${asset.size ?? 'na'}:${asset.lastModified ?? 'na'}:${mime}`;
+        const normalizedText = text.trim();
+        const hashPayload =
+          kind === 'pdf'  ? (pdfBase64 ? `pdf:${pdfBase64}`   : `pdf-meta:${metaFp}`)
+          : kind === 'docx' ? (pdfBase64 ? `docx:${pdfBase64}` : `docx-meta:${metaFp}`)
+          : (normalizedText ? `txt:${normalizedText}` : `file-meta:${metaFp}`);
+        const fileHash = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, hashPayload);
+
+        // --- Upload ---
+        upTimer = setInterval(() => setUploadProgress((p) => Math.min(90, p + 8)), 180);
+        const uploadMime = kind === 'pdf' ? 'application/pdf' : kind === 'docx' ? DOCX_MIME : 'text/plain';
+        const up = await uploadResume({ uri: uploadUri, name: asset.name, mimeType: uploadMime, fileHash });
+        clearInterval(upTimer);
+        setUploadProgress(100);
+
+        addUploadedResume({
+          id: up.id,
+          fileName: up.fileName,
+          mimeType: up.mimeType,
+          uri: uploadUri,
+          uploadedAt: new Date().toISOString(),
+        });
+
+        // --- Parse ---
+        updateStatus(i, { status: 'parsing' });
+        prTimer = setInterval(() => setParseProgress((p) => Math.min(90, p + 10)), 160);
+
+        let parsed: ParsedResume;
+        if (kind === 'pdf' && pdfBase64) {
+          const parsedFile    = await parseResumeFile(pdfBase64, asset.name, 'application/pdf');
+          const fallbackParsed = await parseResume('', asset.name, pdfBase64, 'application/pdf', up.id);
+          const [firstName = 'Unknown', ...restName] = parsedFile.name.trim().split(/\s+/);
+          const mergedSkills = parsedFile.skills.length ? parsedFile.skills : fallbackParsed.skills;
+          parsed = {
+            personalInfo: {
+              firstName: parsedFile.name.trim() ? firstName : fallbackParsed.personalInfo.firstName,
+              lastName:  parsedFile.name.trim() ? restName.join(' ') || 'Candidate' : fallbackParsed.personalInfo.lastName,
+              email:     parsedFile.email    || fallbackParsed.personalInfo.email,
+              phone:     parsedFile.phone    || fallbackParsed.personalInfo.phone,
+              location:  fallbackParsed.personalInfo.location,
+              linkedin:  parsedFile.linkedin || fallbackParsed.personalInfo.linkedin,
+              github:    parsedFile.github   || fallbackParsed.personalInfo.github,
+              portfolio: parsedFile.portfolio || fallbackParsed.personalInfo.portfolio,
             },
-          ],
-          achievements: fallbackParsed.achievements,
-          projects: fallbackParsed.projects,
-          meta: { confidenceScore: parsedFile.skills.length || fallbackParsed.skills.length ? 0.9 : 0.7 },
-        };
-      } else if (kind === 'docx' && pdfBase64) {
-        parsed = await parseResume('', asset.name, pdfBase64, DOCX_MIME, up.id);
-      } else {
-        parsed = await parseResume(text || '', asset.name, pdfBase64, mime, up.id);
+            skills:              mergedSkills,
+            techStack:           mergedSkills.slice(0, 8),
+            experienceLevel:     fallbackParsed.experienceLevel || 'Not specified',
+            education:           fallbackParsed.education,
+            experience:          fallbackParsed.experience.length
+              ? fallbackParsed.experience
+              : [{ company: 'Not specified', title: parsedFile.experience || 'Not specified' }],
+            achievements:        fallbackParsed.achievements,
+            projects:            fallbackParsed.projects,
+            certifications:      parsedFile.certifications?.length ? parsedFile.certifications : (fallbackParsed.certifications ?? []),
+            languages:           fallbackParsed.languages ?? [],
+            totalYearsExperience: fallbackParsed.totalYearsExperience,
+            meta: { confidenceScore: mergedSkills.length ? 0.9 : 0.7 },
+          };
+        } else if (kind === 'docx' && pdfBase64) {
+          parsed = await parseResume('', asset.name, pdfBase64, DOCX_MIME, up.id);
+        } else {
+          parsed = await parseResume(text || '', asset.name, pdfBase64, mime, up.id);
+        }
+
+        clearInterval(prTimer);
+        setParseProgress(100);
+
+        lastParsed   = parsed;
+        lastUploadId = up.id;
+        successCount++;
+        updateStatus(i, { status: 'done' });
+
+      } catch (e) {
+        if (upTimer) clearInterval(upTimer);
+        if (prTimer) clearInterval(prTimer);
+        const msg = e instanceof Error ? e.message : 'Unknown error';
+        if (/already scanned/i.test(msg)) {
+          updateStatus(i, { status: 'skipped' });
+        } else {
+          updateStatus(i, { status: 'error', error: msg });
+        }
       }
-      if (prTimer) clearInterval(prTimer);
-      setParseProgress(100);
-      setLatestParsed(parsed);
-      await getEmbeddings(parsed as unknown as Record<string, unknown>);
-      setEmbeddingsReady(true);
-      const ranked = await rankCandidates(buildJobPrompt(selectedJob));
+    }
+
+    // -----------------------------------------------------------------------
+    // Nothing succeeded — bail out
+    // -----------------------------------------------------------------------
+    if (successCount === 0) {
+      const allDups = fileStatuses.every((f) => f.status === 'skipped');
+      useToastStore.getState().show({
+        title: allDups ? 'Already scanned' : 'Upload failed',
+        message: allDups
+          ? 'All selected resumes have already been scanned.'
+          : 'None of the selected files could be processed.',
+        type: 'error',
+      });
+      setBusy(false);
+      return;
+    }
+
+    // -----------------------------------------------------------------------
+    // Rank ALL candidates for this job (one call covers every uploaded resume)
+    // -----------------------------------------------------------------------
+    setIsRanking(true);
+    try {
+      if (lastParsed) {
+        setLatestParsed(lastParsed);
+        await getEmbeddings(lastParsed as unknown as Record<string, unknown>);
+        setEmbeddingsReady(true);
+      }
+
+      const cw = selectedJob.criteriaWeights;
+      const ranked = await rankCandidates(
+        buildJobPrompt(selectedJob),
+        cw ? { skills: cw.skills, experience: cw.experience, education: cw.education, certifications: cw.certifications } : undefined,
+      );
       setRankings(ranked);
+
       await saveJobRankings({
         jobId: selectedJob.id,
-        rankings: ranked.map((candidate) => ({
-          id: candidate.id,
-          name: candidate.name,
-          title: candidate.title ?? null,
-          location: candidate.location ?? null,
-          skills: candidate.skills,
-          experienceLevel: candidate.experienceLevel,
-          matchScore: candidate.matchScore,
-          summary: candidate.summary ?? null,
+        rankings: ranked.map((c) => ({
+          id: c.id,
+          name: c.name,
+          title: c.title ?? null,
+          location: c.location ?? null,
+          skills: c.skills,
+          experienceLevel: c.experienceLevel,
+          matchScore: c.matchScore,
+          summary: c.summary ?? null,
         })),
       });
+
+      const total = validAssets.length;
+      const done  = fileStatuses.filter((f) => f.status === 'done').length || successCount;
       useToastStore.getState().show({
-        title: 'Resume ranked and saved',
-        message: `Rankings were saved to ${selectedJob.jobRole}.`,
+        title: `${done} of ${total} resume${total > 1 ? 's' : ''} scanned`,
+        message: `Rankings saved to ${selectedJob.jobRole}.`,
         type: 'success',
       });
+
       setLatestUploadJobContext({
         jobId: selectedJob.id,
         industry: selectedJob.industry,
@@ -367,27 +409,31 @@ export function UploadScreen() {
         yearsOfExperience: selectedJob.yearsOfExperience,
         strengths: selectedJob.strengths,
         otherRequirements: selectedJob.otherRequirements,
-        uploadedResumeId: up.id,
+        uploadedResumeId: lastUploadId,
       });
+
       router.push('/parse-result');
     } catch (e) {
-      clearInterval(upTimer);
-      if (prTimer) clearInterval(prTimer);
       useToastStore.getState().show({
-        title: 'Upload failed',
+        title: 'Ranking failed',
         message: e instanceof Error ? e.message : 'Unknown error',
         type: 'error',
       });
     } finally {
-      setIsParsing(false);
+      setIsRanking(false);
       setBusy(false);
     }
   }
+
+  const showFileList = fileStatuses.length > 0;
+  const activeFile   = currentFileIndex >= 0 ? fileStatuses[currentFileIndex] : null;
 
   return (
     <View className="flex-1 bg-background-light pb-24 dark:bg-background-dark">
       <AppHeader showBack title="TalentParse Upload" />
       <ScrollView className="flex-1 p-4" contentContainerStyle={{ paddingBottom: 32 }}>
+
+        {/* Job selector */}
         <View className="mb-4 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
           <Text className="text-sm font-semibold text-slate-800 dark:text-slate-100">Choose Job / Industry First</Text>
           <Text className="mt-1 text-xs text-slate-500 dark:text-slate-400">
@@ -413,9 +459,7 @@ export function UploadScreen() {
                         : 'border-slate-300 bg-slate-50 dark:border-slate-700 dark:bg-slate-800'
                     }`}
                   >
-                    <Text
-                      className={`text-xs ${selected ? 'font-semibold text-primary dark:text-primary-dark' : 'text-slate-700 dark:text-slate-300'}`}
-                    >
+                    <Text className={`text-xs ${selected ? 'font-semibold text-primary dark:text-primary-dark' : 'text-slate-700 dark:text-slate-300'}`}>
                       {job.industry} - {job.jobRole}
                     </Text>
                   </Pressable>
@@ -424,6 +468,8 @@ export function UploadScreen() {
             </View>
           )}
         </View>
+
+        {/* Drop zone */}
         <View className="relative items-center gap-6 overflow-hidden rounded-xl border-2 border-dashed border-primary/50 bg-primary/5 px-6 py-14 dark:border-primary-dark/50 dark:bg-primary-dark/10">
           <View className="pointer-events-none absolute inset-0 bg-primary/5 dark:bg-primary-dark/10" />
           <View className="relative z-10 items-center gap-3">
@@ -431,12 +477,14 @@ export function UploadScreen() {
               <MaterialIcons name="cloud-upload" size={36} color="#259df4" />
             </View>
             <Text className="text-center text-xl font-bold tracking-tight text-slate-900 dark:text-white">
-              Drag & Drop Resume
+              Drag & Drop Resumes
             </Text>
-            <Text className="text-center text-sm text-slate-500 dark:text-slate-400">Upload PDF, DOCX, or TXT</Text>
+            <Text className="text-center text-sm text-slate-500 dark:text-slate-400">
+              Select one or multiple PDF, DOCX, or TXT files
+            </Text>
           </View>
           <Button
-            className="relative z-10 min-w-[120px] rounded-lg px-6 py-2.5 dark:bg-primary-dark"
+            className="relative z-10 min-w-[140px] rounded-lg px-6 py-2.5 dark:bg-primary-dark"
             onPress={onBrowse}
             loading={busy}
             disabled={busy || savedJobs.length === 0 || !selectedJobId}
@@ -451,11 +499,75 @@ export function UploadScreen() {
             </Text>
           ) : null}
         </View>
-        {isParsing ? (
-          <View className="mt-4 gap-3">
-            <ProgressBar progress={parseProgress} label={lastFileName ? `Parsing ${lastFileName}` : 'Parsing Data'} />
+
+        {/* Per-file status list */}
+        {showFileList ? (
+          <View className="mt-4 rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+            <Text className="px-4 pt-4 pb-2 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              {fileStatuses.length} file{fileStatuses.length > 1 ? 's' : ''} selected
+            </Text>
+            {fileStatuses.map((f, idx) => {
+              const icon = STATUS_ICON[f.status];
+              const isActive = idx === currentFileIndex && (f.status === 'uploading' || f.status === 'parsing');
+              return (
+                <View
+                  key={`${f.name}-${idx}`}
+                  className={`mx-3 mb-2 rounded-lg px-3 py-2.5 ${isActive ? 'bg-primary/5 dark:bg-primary-dark/10' : 'bg-slate-50 dark:bg-slate-800'}`}
+                >
+                  <View className="flex-row items-center gap-3">
+                    {f.status === 'uploading' || f.status === 'parsing' ? (
+                      <ActivityIndicator size="small" color={icon.color} />
+                    ) : (
+                      <MaterialIcons name={icon.name} size={18} color={icon.color} />
+                    )}
+                    <View className="min-w-0 flex-1">
+                      <Text className="text-sm font-medium text-slate-800 dark:text-slate-100" numberOfLines={1}>
+                        {f.name}
+                      </Text>
+                      {f.status === 'uploading' && (
+                        <Text className="text-xs text-primary dark:text-primary-dark">Uploading…</Text>
+                      )}
+                      {f.status === 'parsing' && (
+                        <Text className="text-xs text-purple-500">Parsing…</Text>
+                      )}
+                      {f.status === 'skipped' && (
+                        <Text className="text-xs text-amber-600 dark:text-amber-400">Already scanned — skipped</Text>
+                      )}
+                      {f.status === 'error' && (
+                        <Text className="text-xs text-red-500" numberOfLines={1}>{f.error ?? 'Failed'}</Text>
+                      )}
+                      {f.status === 'done' && (
+                        <Text className="text-xs text-green-600 dark:text-green-400">Done</Text>
+                      )}
+                    </View>
+                  </View>
+                  {/* Progress bar for actively-processing file */}
+                  {isActive && (
+                    <View className="mt-2">
+                      <ProgressBar
+                        progress={f.status === 'uploading' ? uploadProgress : parseProgress}
+                        label=""
+                      />
+                    </View>
+                  )}
+                </View>
+              );
+            })}
+
+            {/* Ranking row */}
+            {isRanking && (
+              <View className="mx-3 mb-3 flex-row items-center gap-3 rounded-lg bg-indigo-50 px-3 py-2.5 dark:bg-indigo-900/20">
+                <ActivityIndicator size="small" color="#6366f1" />
+                <Text className="text-sm font-medium text-indigo-700 dark:text-indigo-300">
+                  Ranking all candidates…
+                </Text>
+              </View>
+            )}
+
+            <View className="h-1" />
           </View>
         ) : null}
+
       </ScrollView>
     </View>
   );

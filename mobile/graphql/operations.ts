@@ -19,6 +19,9 @@ export const PARSE_RESUME = gql`
         email
         phone
         location
+        linkedin
+        github
+        portfolio
       }
       skills
       techStack
@@ -34,6 +37,7 @@ export const PARSE_RESUME = gql`
         startDate
         endDate
         current
+        duration
       }
       achievements
       projects {
@@ -41,6 +45,13 @@ export const PARSE_RESUME = gql`
         description
         url
       }
+      certifications {
+        name
+        issuer
+        year
+      }
+      languages
+      totalYearsExperience
       meta {
         confidenceScore
         processingTimeMs
@@ -54,9 +65,19 @@ export const PARSE_RESUME_FILE = gql`
     parseResumeFile(input: $input) {
       name
       email
+      phone
+      linkedin
+      github
+      portfolio
       skills
       experience
       education
+      certifications {
+        name
+        issuer
+        year
+      }
+      rawText
     }
   }
 `;
@@ -74,8 +95,14 @@ export const RANK_CANDIDATES = gql`
       name
       title
       location
+      email
+      phone
+      linkedin
+      github
+      portfolio
       skills
       experienceLevel
+      totalYearsExperience
       matchScore
       avatarUrl
       initials
@@ -84,6 +111,8 @@ export const RANK_CANDIDATES = gql`
         technicalSkills
         experienceLevel
         domainKnowledge
+        educationScore
+        certificationScore
       }
       skillAnalysis {
         name
@@ -112,6 +141,12 @@ export const SAVE_JOB_ANALYSIS = gql`
       strengths
       otherRequirements
       rankedCandidateCount
+      criteriaWeights {
+        skills
+        experience
+        education
+        certifications
+      }
       rankedResumes {
         id
         name
@@ -139,6 +174,12 @@ export const SAVE_JOB_RANKINGS = gql`
       strengths
       otherRequirements
       rankedCandidateCount
+      criteriaWeights {
+        skills
+        experience
+        education
+        certifications
+      }
       rankedResumes {
         id
         name
@@ -172,6 +213,12 @@ export const SAVED_JOBS = gql`
       strengths
       otherRequirements
       rankedCandidateCount
+      criteriaWeights {
+        skills
+        experience
+        education
+        certifications
+      }
       rankedResumes {
         id
         name
@@ -199,6 +246,12 @@ export const SAVED_JOB = gql`
       strengths
       otherRequirements
       rankedCandidateCount
+      criteriaWeights {
+        skills
+        experience
+        education
+        certifications
+      }
       rankedResumes {
         id
         name

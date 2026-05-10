@@ -5,6 +5,9 @@ export const typeDefs = `#graphql
     email: String
     phone: String
     location: String
+    linkedin: String
+    github: String
+    portfolio: String
   }
 
   type EducationEntry {
@@ -28,6 +31,12 @@ export const typeDefs = `#graphql
     url: String
   }
 
+  type Certification {
+    name: String!
+    issuer: String
+    year: String
+  }
+
   type ParseMeta {
     confidenceScore: Float
     processingTimeMs: Int
@@ -42,15 +51,24 @@ export const typeDefs = `#graphql
     experience: [ExperienceEntry!]!
     achievements: [String!]!
     projects: [ProjectEntry!]!
+    certifications: [Certification!]!
+    languages: [String!]!
+    totalYearsExperience: Float
     meta: ParseMeta
   }
 
   type ResumeParseResult {
     name: String!
     email: String!
+    phone: String!
+    linkedin: String!
+    github: String!
+    portfolio: String!
     skills: [String!]!
     experience: String!
     education: String!
+    certifications: [Certification!]!
+    rawText: String!
   }
 
   type UploadResult {
@@ -63,6 +81,8 @@ export const typeDefs = `#graphql
     technicalSkills: Float!
     experienceLevel: Float!
     domainKnowledge: Float!
+    educationScore: Float!
+    certificationScore: Float!
   }
 
   type SkillAnalysisRow {
@@ -83,8 +103,14 @@ export const typeDefs = `#graphql
     name: String!
     title: String
     location: String
+    email: String
+    phone: String
+    linkedin: String
+    github: String
+    portfolio: String
     skills: [String!]!
     experienceLevel: String!
+    totalYearsExperience: Float
     matchScore: Float!
     avatarUrl: String
     initials: String
@@ -107,6 +133,13 @@ export const typeDefs = `#graphql
     user: UserProfile!
   }
 
+  type JobWeights {
+    skills: Int!
+    experience: Int!
+    education: Int!
+    certifications: Int!
+  }
+
   type SavedJob {
     id: ID!
     industry: String!
@@ -117,6 +150,7 @@ export const typeDefs = `#graphql
     otherRequirements: String!
     rankedCandidateCount: Int!
     rankedResumes: [SavedRankedResume!]!
+    criteriaWeights: JobWeights
     createdAt: String!
   }
 
@@ -157,8 +191,16 @@ export const typeDefs = `#graphql
     payload: String!
   }
 
+  input CriteriaWeights {
+    skills: Int
+    experience: Int
+    education: Int
+    certifications: Int
+  }
+
   input RankCandidatesInput {
     jobRole: String!
+    criteriaWeights: CriteriaWeights
   }
 
   input RegisterInput {
@@ -187,6 +229,7 @@ export const typeDefs = `#graphql
     strengths: String
     otherRequirements: String
     rankedCandidateCount: Int!
+    criteriaWeights: CriteriaWeights
   }
 
   input SaveJobRankingsInput {
